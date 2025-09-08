@@ -1,0 +1,91 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- Production GPS/INS Localization System -->
+  
+  <!-- Arguments for different hardware configurations -->
+  <arg name="gnss_mode" default="septentrio" />  <!-- septentrio, ublox, generic -->
+  <arg name="use_ins" default="true" />
+  <arg name="use_rtk" default="true" />
+  <arg name="use_rviz" default="false" />
+  
+  <!-- Lever arm calibration (antenna offset from IMU in meters) -->
+  <arg name="lever_arm_x" default="0.0" />
+  <arg name="lever_arm_y" default="0.0" />
+  <arg name="lever_arm_z" default="0.1" />
+  
+  <!-- Production GPS/INS Localization Node -->
+  <node name="production_gps_localization" pkg="professor_robot" type="production_gps_localization.py" output="screen">
+    <param name="gnss_mode" value="$(arg gnss_mode)" />
+    <param name="use_ins" value="$(arg use_ins)" />
+    <param name="use_rtk" value="$(arg use_rtk)" />
+    
+    <!-- Frame configuration -->
+    <param name="map_frame" value="map" />
+    <param name="odom_frame" value="odom" />
+    <param name="base_frame" value="base_link" />
+    <param name="gnss_frame" value="gnss" />
+    <param name="imu_frame" value="imu" />
+    
+    <!-- Lever arm calibration -->
+    <param name="lever_arm_x" value="$(arg lever_arm_x)" />
+    <param name="lever_arm_y" value="$(arg lever_arm_y)" />
+    <param name="lever_arm_z" value="$(arg lever_arm_z)" />
+    
+    <!-- Production quality thresholds -->
+    <param name="min_satellites" value="8" />
+    <param name="max_hdop" value="2.0" />
+    <param name="max_age" value="1.0" />
+    <param name="min_rtk_ratio" value="2.0" />
+  </node>
+  
+  <!-- Robot Localization: Production EKF with INS -->
+  <node pkg="robot_localization" type="ekf_localization_node" name="ekf_localization_node" output="screen">
+    <rosparam file="$(find professor_robot)/config/production_ekf_localization.yaml" command="load" />
+    <remap from="/odometry/filtered" to="/odometry/filtered" />
+  </node>
+  
+  <!-- Septentrio GNSS Driver (if using Septentrio hardware) -->
+  <group if="$(eval arg('gnss_mode') == 'septentrio')">
+    <include file="$(find septentrio_gnss_driver)/launch/septentrio.launch">
+      <arg name="device" value="/dev/ttyUSB0" />
+      <arg name="baudrate" value="115200" />
+      <arg name="frame_id" value="gnss" />
+      <arg name="use_gnss_time" value="true" />
+      <arg name="datum" value="ETRS89" />
+    </include>
+    
+    <rosparam param="/septentrio_gnss_driver/ins_use_poi" value="true" />
+    <rosparam param="/septentrio_gnss_driver/poi_frame_id" value="base_link" />
+    <rosparam param="/septentrio_gnss_driver/poi_x" value="$(arg lever_arm_x)" />
+    <rosparam param="/septentrio_gnss_driver/poi_y" value="$(arg lever_arm_y)" />
+    <rosparam param="/septentrio_gnss_driver/poi_z" value="$(arg lever_arm_z)" />
+  </group>
+  
+  <!-- Ublox Driver (if using Ublox hardware) -->
+  <group if="$(eval arg('gnss_mode') == 'ublox')">
+    <include file="$(find ublox_gps)/launch/ublox_device.launch">
+      <arg name="node_name" value="ublox_gps" />
+      <arg name="param_file_name" value="zed_f9p" />
+      <arg name="device" value="/dev/ttyUSB0" />
+      <arg name="frame_id" value="gnss" />
+    </include>
+  </group>
+  
+  <!-- Static transforms for sensor frames -->
+  <node pkg="tf" type="static_transform_publisher" name="gnss_transform" 
+        args="$(arg lever_arm_x) $(arg lever_arm_y) $(arg lever_arm_z) 0 0 0 base_link gnss 50" />
+        
+  <node pkg="tf" type="static_transform_publisher" name="imu_transform" 
+        args="0 0 0 0 0 0 base_link imu 50" />
+  
+  <!-- Production diagnostics -->
+  <node name="gnss_diagnostics" pkg="professor_robot" type="gnss_diagnostics.py" output="screen" required="false" />
+  
+  <!-- Production monitoring dashboard (optional) -->
+  <node name="gnss_monitor" pkg="professor_robot" type="gnss_monitor.py" output="screen" required="false" />
+  
+  <!-- RViz for production monitoring -->
+  <node name="rviz" pkg="rviz" type="rviz" output="screen" if="$(arg use_rviz)"
+        args="-d $(find professor_robot)/launch/production_gps.rviz" />
+  
+</launch> 

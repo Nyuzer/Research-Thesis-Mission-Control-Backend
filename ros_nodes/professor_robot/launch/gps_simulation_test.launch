@@ -1,0 +1,48 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- GPS Simulation and Enhanced Localization Test -->
+  
+  <!-- Arguments -->
+  <arg name="use_rviz" default="true" />
+  <arg name="gps_accuracy" default="3.0" />
+  <arg name="gps_rate" default="5.0" />
+  
+  <!-- GPS Simulator -->
+  <node name="gps_simulator" pkg="professor_robot" type="gps_simulator.py" output="screen">
+    <param name="output_topic" value="/fix" />
+    <param name="base_accuracy" value="$(arg gps_accuracy)" />
+    <param name="update_rate" value="$(arg gps_rate)" />
+    <param name="simulate_movement" value="true" />
+    
+    <!-- TU Dortmund campus coordinates -->
+    <param name="initial_lat" value="51.4936" />
+    <param name="initial_lon" value="7.4192" />
+    <param name="initial_alt" value="160.0" />
+  </node>
+  
+  <!-- Enhanced GPS Localization System -->
+  <include file="$(find professor_robot)/launch/enhanced_gps_localization.launch" />
+  
+  <!-- Map Server -->
+  <node name="map_server" pkg="map_server" type="map_server" 
+        args="$(find professor_robot)/maps/occupancy_grid.yaml" output="screen" />
+  
+  <!-- Robot State Publisher -->
+  <param name="robot_description" command="$(find xacro)/xacro '$(find professor_robot)/urdf/my__robot.urdf'" />
+  <node name="robot_state_publisher" pkg="robot_state_publisher" type="robot_state_publisher" output="screen" />
+  
+  <!-- Transform publisher for GPS frame -->
+  <node pkg="tf" type="static_transform_publisher" name="gps_link_publisher" 
+        args="0 0 0.1 0 0 0 base_link gps 50" />
+  
+  <!-- Fake cmd_vel for testing (publishes simple movement commands) -->
+  <node name="test_cmd_vel" pkg="professor_robot" type="test_cmd_vel.py" output="screen" required="false" />
+  
+  <!-- RViz for visualization -->
+  <node name="rviz" pkg="rviz" type="rviz" output="screen" if="$(arg use_rviz)"
+        args="-d $(find professor_robot)/launch/gps_test.rviz" />
+  
+  <!-- GPS Quality Monitor -->
+  <node name="gps_quality_display" pkg="professor_robot" type="gps_quality_display.py" output="screen" required="false" />
+  
+</launch> 

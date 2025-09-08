@@ -1,0 +1,37 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- Enhanced GPS-based localization with accuracy improvements -->
+  
+  <!-- Enhanced GPS Localization Node -->
+  <node name="enhanced_gps_localization" pkg="professor_robot" type="enhanced_gps_localization.py" output="screen">
+    <param name="gps_topic" value="/fix" />
+    <param name="coordinate_frame" value="EPSG:25832" />
+    <param name="map_frame" value="map" />
+    <param name="odom_frame" value="odom" />
+    <param name="base_frame" value="base_link" />
+    
+    <!-- Enhanced GPS parameters -->
+    <param name="min_satellites" value="6" />
+    <param name="max_position_jump" value="10.0" />
+    <param name="gps_buffer_size" value="10" />
+    <param name="output_frequency" value="30.0" />
+  </node>
+  
+  <!-- Robot Localization: NavSat Transform Node -->
+  <node pkg="robot_localization" type="navsat_transform_node" name="navsat_transform_node" output="screen">
+    <rosparam file="$(find professor_robot)/config/enhanced_navsat_transform.yaml" command="load" />
+    <remap from="/imu/data" to="/imu" />
+    <remap from="/gps/fix" to="/fix" />
+    <remap from="/odometry/gps" to="/odometry/gps" />
+  </node>
+  
+  <!-- Robot Localization: EKF Localization Node -->
+  <node pkg="robot_localization" type="ekf_localization_node" name="ekf_localization_node" output="screen">
+    <rosparam file="$(find professor_robot)/config/enhanced_ekf_localization.yaml" command="load" />
+    <remap from="/odometry/filtered" to="/odometry/filtered" />
+  </node>
+  
+  <!-- GPS Quality Monitor (optional) -->
+  <node name="gps_quality_monitor" pkg="professor_robot" type="gps_quality_monitor.py" output="screen" required="false" />
+  
+</launch> 

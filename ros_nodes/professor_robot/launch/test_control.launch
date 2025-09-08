@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- Test launch file for basic robot control validation -->
+  
+  <!-- Send robot description to parameter server -->
+  <param name="robot_description" command="cat '$(find professor_robot)/urdf/my__robot.urdf'"/>
+  
+  <!-- Start robot state publisher -->
+  <node name="robot_state_publisher" pkg="robot_state_publisher" type="robot_state_publisher"/>
+  
+  <!-- Start joint state publisher for simulation -->
+  <node name="joint_state_publisher" pkg="joint_state_publisher" type="joint_state_publisher"/>
+  
+  <!-- Publish fake odometry for testing -->
+  <node pkg="tf" type="static_transform_publisher" name="odom_to_base_link" 
+        args="0 0 0 0 0 0 odom base_link 100" />
+  
+  <!-- Echo cmd_vel for monitoring -->
+  <node name="cmd_vel_monitor" pkg="rostopic" type="rostopic" 
+        args="echo /cmd_vel" output="screen"/>
+
+</launch> 

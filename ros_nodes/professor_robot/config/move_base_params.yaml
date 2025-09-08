@@ -1,0 +1,34 @@
+# Clean Move Base Parameters
+# Based on proven ROS navigation configurations
+# Optimized for stability and consistent multi-goal navigation
+
+# Planner selection - reliable defaults
+base_global_planner: "global_planner/GlobalPlanner"
+base_local_planner: "base_local_planner/TrajectoryPlannerROS"
+
+# Planning frequencies - conservative for stability
+planner_frequency: 1.0 # Plan every 1 second
+controller_frequency: 10.0 # Control at 10 Hz
+
+# Planner patience - reasonable timeouts
+planner_patience: 5.0
+controller_patience: 15.0
+
+# Conservative reset distance
+conservative_reset_dist: 3.0
+
+# Recovery behavior configuration - SIMPLIFIED TO PREVENT INFINITE ROTATION
+recovery_behavior_enabled: true
+clearing_rotation_allowed: false # DISABLED to prevent infinite rotation
+shutdown_costmaps: false
+oscillation_timeout: 10.0
+oscillation_distance: 0.2
+
+# Recovery behaviors - SIMPLIFIED: only costmap clearing, NO rotation recovery
+recovery_behaviors:
+  - name: "conservative_reset"
+    type: "clear_costmap_recovery/ClearCostmapRecovery"
+
+# Recovery behavior parameters - only costmap clearing
+conservative_reset:
+  reset_distance: 1.5

@@ -1,0 +1,55 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- Simple Robot Simulation - Alternative to hardware -->
+  
+  <!-- Use simulation time -->
+  <param name="/use_sim_time" value="true"/>
+  
+  <!-- Send robot description to parameter server -->
+  <param name="robot_description" command="cat '$(find professor_robot)/urdf/my__robot.urdf'"/>
+
+  <!-- Robot state publisher -->
+  <node name="robot_state_publisher" pkg="robot_state_publisher" type="robot_state_publisher"/>
+
+  <!-- Joint state publisher for simple joints -->
+  <node name="joint_state_publisher" pkg="joint_state_publisher" type="joint_state_publisher"/>
+
+  <!-- Fake odometry publisher -->
+  <node pkg="tf" type="static_transform_publisher" name="odom_to_base_link" 
+        args="0 0 0 0 0 0 odom base_link 100" />
+
+  <!-- Fake GPS publisher -->
+  <node name="fake_gps" pkg="rostopic" type="rostopic" 
+        args="pub -r 1 /fix sensor_msgs/NavSatFix 
+        '{header: {stamp: now, frame_id: base_link}, 
+          status: {status: 0, service: 1}, 
+          latitude: 51.4934, longitude: 7.4138, altitude: 100.0,
+          position_covariance_type: 1}'" />
+
+  <!-- Fake odometry data publisher -->
+  <node name="fake_odom" pkg="rostopic" type="rostopic"
+        args="pub -r 10 /odom nav_msgs/Odometry
+        '{header: {stamp: now, frame_id: odom}, 
+          child_frame_id: base_link,
+          pose: {pose: {position: {x: 0.0, y: 0.0, z: 0.0}, 
+                        orientation: {x: 0.0, y: 0.0, z: 0.0, w: 1.0}},
+                 covariance: [0.1, 0, 0, 0, 0, 0,
+                             0, 0.1, 0, 0, 0, 0, 
+                             0, 0, 0.1, 0, 0, 0,
+                             0, 0, 0, 0.1, 0, 0,
+                             0, 0, 0, 0, 0.1, 0,
+                             0, 0, 0, 0, 0, 0.1]},
+          twist: {twist: {linear: {x: 0.0, y: 0.0, z: 0.0},
+                         angular: {x: 0.0, y: 0.0, z: 0.0}},
+                 covariance: [0.1, 0, 0, 0, 0, 0,
+                             0, 0.1, 0, 0, 0, 0,
+                             0, 0, 0.1, 0, 0, 0, 
+                             0, 0, 0, 0.1, 0, 0,
+                             0, 0, 0, 0, 0.1, 0,
+                             0, 0, 0, 0, 0, 0.1]}'" />
+
+  <!-- Echo cmd_vel commands to show they're being received -->
+  <node name="cmd_vel_echo" pkg="rostopic" type="rostopic" 
+        args="echo /cmd_vel" output="screen"/>
+
+</launch> 

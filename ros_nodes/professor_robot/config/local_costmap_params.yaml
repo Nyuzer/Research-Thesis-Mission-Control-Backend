@@ -1,0 +1,27 @@
+# Clean Local Costmap Parameters
+# Minimal configuration avoiding rolling window + static layer conflicts
+# Optimized for real-time obstacle avoidance
+
+local_costmap:
+  # Frame configuration
+  global_frame: odom
+  robot_base_frame: base_link
+
+  # Update frequencies - balanced for performance
+  update_frequency: 5.0
+  publish_frequency: 2.0
+
+  # Rolling window configuration - robot-centered
+  static_map: false
+  rolling_window: true
+  width: 6.0
+  height: 6.0
+  resolution: 0.05
+
+  # Transform tolerance
+  transform_tolerance: 0.5
+
+  # Plugin configuration - ONLY obstacle and inflation layers
+  plugins:
+    - { name: obstacle_layer, type: "costmap_2d::ObstacleLayer" }
+    - { name: inflation_layer, type: "costmap_2d::InflationLayer" }

@@ -1,0 +1,602 @@
+# Enhanced EKF Localization Configuration
+# Optimized for quality-weighted GPS data and improved accuracy
+
+# Publishing frequency (Hz) - High frequency for smooth navigation
+frequency: 30.0
+
+# Sensor timeout - More aggressive timeout for responsiveness
+sensor_timeout: 0.2
+
+# Two-dimensional mode (ignore z, roll, pitch)
+two_d_mode: true
+
+# Transform time offset
+transform_time_offset: 0.0
+
+# Transform timeout
+transform_timeout: 0.0
+
+# Print diagnostics for enhanced monitoring
+print_diagnostics: true
+
+# Debug mode
+debug: false
+
+# Map frame
+map_frame: map
+
+# Odometry frame
+odom_frame: odom
+
+# Base link frame
+base_link_frame: base_link
+
+# World frame (use map for global navigation with GPS)
+world_frame: map
+
+# Enhanced GPS odometry source from our enhanced GPS node
+odom0: /odometry/gps
+odom0_config: [
+    true, # x - Use GPS for x position
+    true, # y - Use GPS for y position
+    false, # z - Ignore z (2D navigation)
+    false, # roll - Ignore roll (2D navigation)
+    false, # pitch - Ignore pitch (2D navigation)
+    false, # yaw - Don't use GPS for orientation (unreliable)
+    false, # vx - Don't use GPS velocity (noisy)
+    false, # vy - Don't use GPS velocity (noisy)
+    false, # vz - Ignore z velocity
+    false, # vroll - Ignore roll velocity
+    false, # vpitch - Ignore pitch velocity
+    false, # vyaw - Don't use GPS angular velocity
+    false, # ax - Don't use GPS acceleration
+    false, # ay - Don't use GPS acceleration
+    false, # az - Don't use GPS acceleration
+  ]
+
+# Enhanced GPS is absolute positioning, not differential
+odom0_differential: false
+
+# Not relative positioning
+odom0_relative: false
+
+# Use child frame for GPS pose
+odom0_pose_use_child_frame: false
+
+# Queue size for GPS odometry messages
+odom0_queue_size: 10
+
+# Enhanced outlier rejection thresholds
+# More strict for position since we have quality monitoring
+odom0_pose_rejection_threshold: 3.0 # 3 std dev for position
+odom0_twist_rejection_threshold: 1.0 # 1 std dev for velocity
+
+# Wheel odometry source (if available)
+# odom1: /wheel_odom
+# odom1_config: [
+#     false,  # x - GPS primary for position
+#     false,  # y - GPS primary for position
+#     false,  # z - Ignore z
+#     false,  # roll - Ignore roll
+#     false,  # pitch - Ignore pitch
+#     true,   # yaw - Use wheel odometry for orientation
+#     true,   # vx - Use wheel odometry for velocity
+#     true,   # vy - Use wheel odometry for velocity
+#     false,  # vz - Ignore z velocity
+#     false,  # vroll - Ignore roll velocity
+#     false,  # vpitch - Ignore pitch velocity
+#     true,   # vyaw - Use wheel odometry for angular velocity
+#     false,  # ax - Don't use acceleration from wheels
+#     false,  # ay - Don't use acceleration from wheels
+#     false,  # az - Ignore z acceleration
+# ]
+
+# IMU source (if available)
+# imu0: /imu
+# imu0_config: [
+#     false,  # x - GPS primary for position
+#     false,  # y - GPS primary for position
+#     false,  # z - Ignore z
+#     false,  # roll - Ignore roll (2D navigation)
+#     false,  # pitch - Ignore pitch (2D navigation)
+#     true,   # yaw - Use IMU for orientation
+#     false,  # vx - GPS/wheels primary for velocity
+#     false,  # vy - GPS/wheels primary for velocity
+#     false,  # vz - Ignore z velocity
+#     false,  # vroll - Ignore roll velocity
+#     false,  # vpitch - Ignore pitch velocity
+#     true,   # vyaw - Use IMU for angular velocity
+#     true,   # ax - Use IMU for linear acceleration
+#     true,   # ay - Use IMU for linear acceleration
+#     false,  # az - Ignore z acceleration (2D navigation)
+# ]
+
+# Enhanced process noise covariance matrix
+# Tuned for GPS-primary localization with quality monitoring
+process_noise_covariance: [
+    # x
+    0.03,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    # y
+    0,
+    0.03,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    # z (unused)
+    0,
+    0,
+    0.06,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    # roll (unused)
+    0,
+    0,
+    0,
+    0.03,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    # pitch (unused)
+    0,
+    0,
+    0,
+    0,
+    0.03,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    # yaw
+    0,
+    0,
+    0,
+    0,
+    0,
+    0.1,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    # vx
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0.025,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    # vy
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0.025,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    # vz (unused)
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0.04,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    # vroll (unused)
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0.01,
+    0,
+    0,
+    0,
+    0,
+    0,
+    # vpitch (unused)
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0.01,
+    0,
+    0,
+    0,
+    0,
+    # vyaw
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0.02,
+    0,
+    0,
+    0,
+    # ax
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0.01,
+    0,
+    0,
+    # ay
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0.01,
+    0,
+    # az (unused)
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0.015,
+  ]
+
+# Initial estimate error covariance matrix
+# More confident in GPS position, less confident in other states
+initial_estimate_covariance: [
+    # x - Start with moderate uncertainty in GPS position
+    1.0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    # y
+    0,
+    1.0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    # z (unused)
+    0,
+    0,
+    1e6,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    # roll (unused)
+    0,
+    0,
+    0,
+    1e6,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    # pitch (unused)
+    0,
+    0,
+    0,
+    0,
+    1e6,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    # yaw - High uncertainty initially
+    0,
+    0,
+    0,
+    0,
+    0,
+    10.0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    # vx - High uncertainty in velocity
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    5.0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    # vy
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    5.0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    # vz (unused)
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    1e6,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    # vroll (unused)
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    1e6,
+    0,
+    0,
+    0,
+    0,
+    0,
+    # vpitch (unused)
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    1e6,
+    0,
+    0,
+    0,
+    0,
+    # vyaw - Moderate uncertainty
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    2.0,
+    0,
+    0,
+    0,
+    # ax - High uncertainty in acceleration
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    5.0,
+    0,
+    0,
+    # ay
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    5.0,
+    0,
+    # az (unused)
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    1e6,
+  ]

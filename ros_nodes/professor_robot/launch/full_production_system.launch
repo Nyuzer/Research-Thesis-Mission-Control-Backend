@@ -1,0 +1,74 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- 🚀 COMPLETE PRODUCTION SYSTEM LAUNCH FILE -->
+  <!-- This launches the entire robot system with one command -->
+  
+  <!-- ========== ARGUMENTS ========== -->
+  <arg name="gnss_mode" default="generic" doc="GNSS hardware: generic, septentrio, ublox" />
+  <arg name="use_ins" default="false" doc="Use INS/IMU integration" />
+  <arg name="use_rtk" default="false" doc="Use RTK corrections for cm-level accuracy" />
+  <arg name="robot_namespace" default="" doc="Robot namespace (leave empty for global)" />
+  <arg name="start_robot_drivers" default="false" doc="Start robot hardware drivers" />
+  <arg name="map_file" default="$(find professor_robot)/maps/map.yaml" doc="Map file for navigation" />
+  
+  <!-- ========== ROBOT DESCRIPTION ========== -->
+  <group ns="$(arg robot_namespace)">
+    <include file="$(find professor_robot)/launch/robot_state_publisher.launch" />
+  </group>
+  
+  <!-- ========== GPS LOCALIZATION SYSTEM ========== -->
+  <group ns="$(arg robot_namespace)">
+    <include file="$(find professor_robot)/launch/production_gps_localization.launch">
+      <arg name="gnss_mode" value="$(arg gnss_mode)" />
+      <arg name="use_ins" value="$(arg use_ins)" />
+      <arg name="use_rtk" value="$(arg use_rtk)" />
+    </include>
+  </group>
+  
+  <!-- ========== NAVIGATION STACK ========== -->
+  <group ns="$(arg robot_namespace)">
+    <include file="$(find professor_robot)/launch/navigation.launch">
+      <arg name="map_file" value="$(arg map_file)" />
+    </include>
+  </group>
+  
+  <!-- ========== BACKEND COMMUNICATION ========== -->
+  <group ns="$(arg robot_namespace)">
+    <include file="$(find fiware_mqtt_bridge)/launch/fiware_mqtt_bridge.launch" />
+  </group>
+  
+  <!-- ========== ROBOT HARDWARE DRIVERS (OPTIONAL) ========== -->
+  <!-- Uncomment the appropriate driver for your robot -->
+  
+  <!-- Innok Heros Robot -->
+  <group if="$(arg start_robot_drivers)" ns="$(arg robot_namespace)">
+    <!-- <include file="$(find innok_heros_driver)/launch/innok_heros_driver.launch" /> -->
+    <!-- <include file="$(find innok_heros_control)/launch/control.launch" /> -->
+  </group>
+  
+  <!-- Generic Robot Drivers -->
+  <!-- Add your robot-specific drivers here -->
+  
+  <!-- ========== DIAGNOSTICS AND MONITORING ========== -->
+  <group ns="$(arg robot_namespace)">
+    <!-- Robot diagnostics -->
+    <node name="robot_diagnostics" pkg="diagnostic_aggregator" type="aggregator_node" output="screen">
+      <rosparam command="load" file="$(find professor_robot)/config/diagnostics.yaml" />
+    </node>
+    
+    <!-- System monitor -->
+    <node name="system_monitor" pkg="diagnostic_updater" type="diagnostic_updater" output="screen" />
+  </group>
+  
+  <!-- ========== LOGGING AND RECORDING (OPTIONAL) ========== -->
+  <!-- Uncomment to enable data recording -->
+  <!--
+  <node name="rosbag_record" pkg="rosbag" type="record" output="screen"
+        args="-o /tmp/robot_log /fix /gnss/odometry /odometry/filtered /cmd_vel /robot/state /robot/mission_status" />
+  -->
+  
+  <!-- ========== LAUNCH SUMMARY ========== -->
+  <node name="launch_summary" pkg="rospy" type="rospy" output="screen" 
+        args="$(find professor_robot)/scripts/launch_summary.py" />
+
+</launch> 

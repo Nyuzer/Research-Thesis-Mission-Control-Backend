@@ -1,0 +1,25 @@
+# Clean Global Costmap Parameters
+# Minimal configuration for stable global path planning
+# Uses static map with obstacle and inflation layers
+
+global_costmap:
+  # Frame configuration
+  global_frame: map
+  robot_base_frame: base_link
+
+  # Update frequencies - conservative for stability
+  update_frequency: 1.0
+  publish_frequency: 0.5
+
+  # Static map configuration
+  static_map: true
+  rolling_window: false
+
+  # Transform tolerance
+  transform_tolerance: 0.5
+
+  # Plugin configuration - static map + obstacles + inflation
+  plugins:
+    - { name: static_layer, type: "costmap_2d::StaticLayer" }
+    - { name: obstacle_layer, type: "costmap_2d::ObstacleLayer" }
+    - { name: inflation_layer, type: "costmap_2d::InflationLayer" }

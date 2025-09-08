@@ -1,0 +1,37 @@
+# NavSat Transform Node Configuration
+# Transforms GPS coordinates to local odometry frame
+
+# Publishing frequency for transforms
+frequency: 10.0
+
+# Delay before publishing transforms
+delay: 3.0
+
+# Magnetic declination for Germany (in radians)
+# Dortmund area magnetic declination: approximately 2.1 degrees = 0.037 radians
+magnetic_declination_radians: 0.037
+
+# Yaw offset (robot-specific calibration)
+yaw_offset: 0.0
+
+# Zero altitude (project GPS to 2D plane)
+zero_altitude: true
+
+# Don't broadcast UTM transform (we handle it in gps_localization.py)
+broadcast_utm_transform: false
+
+# Use odometry yaw for orientation
+use_odometry_yaw: false
+
+# Wait for initial datum
+wait_for_datum: false
+
+# Initial datum coordinates (TU Dortmund campus area)
+# [latitude, longitude, altitude] in WGS84
+datum: [51.4936, 7.4192, 160.0]
+
+# Transform timeout
+transform_timeout: 0.0
+# Publishing to these topics
+# Input: /fix (GPS)
+# Output: /odometry/gps (transformed coordinates)

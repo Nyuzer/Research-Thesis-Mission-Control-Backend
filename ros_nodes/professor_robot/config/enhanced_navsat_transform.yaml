@@ -1,0 +1,68 @@
+# Enhanced NavSat Transform Configuration
+# Optimized for enhanced GPS localization with quality monitoring
+
+# Publishing frequency for transforms - higher frequency for smoother operation
+frequency: 15.0
+
+# Delay before publishing transforms - reduced for faster response
+delay: 2.0
+
+# Magnetic declination for Germany (in radians)
+# Dortmund area magnetic declination: approximately 2.1 degrees = 0.037 radians
+# Updated for current date (magnetic declination changes over time)
+magnetic_declination_radians: 0.037
+
+# Yaw offset (robot-specific calibration)
+# This should be calibrated for the specific robot installation
+yaw_offset: 0.0
+
+# Zero altitude (project GPS to 2D plane)
+zero_altitude: true
+
+# Don't broadcast UTM transform (we handle coordinate transforms in enhanced GPS node)
+broadcast_utm_transform: false
+
+# Use odometry yaw for orientation
+# Set to false since enhanced GPS node doesn't provide reliable orientation
+use_odometry_yaw: false
+
+# Wait for initial datum - faster startup
+wait_for_datum: false
+
+# Publish filtered GPS coordinates
+publish_filtered_gps: true
+
+# Enhanced parameters for better accuracy
+transform_timeout: 0.1
+
+# Coordinate frame parameters
+yaw_offset_tolerance: 5.0 # Radians - tolerance for yaw offset
+magnetic_declination_tolerance: 5.0 # Radians - tolerance for magnetic declination
+
+# Enhanced filtering parameters
+filter_gps: true # Enable GPS filtering
+gps_filter_window: 5 # Size of filter window
+gps_outlier_threshold: 3.0 # Standard deviations for outlier rejection
+
+# Initial datum coordinates (TU Dortmund campus area)
+# [latitude, longitude, altitude] in WGS84
+# These coordinates should be near the robot's operating area
+datum: [51.4936, 7.4192, 160.0]
+
+# Enhanced quality monitoring
+enable_quality_monitoring: true
+min_fix_quality: 1 # Minimum GPS fix quality (0=invalid, 1=GPS, 2=DGPS)
+min_satellites: 6 # Minimum number of satellites
+
+# Coordinate system parameters for German region
+utm_zone: 32 # UTM Zone 32 for Germany
+utm_hemisphere: "N" # Northern hemisphere
+
+# Publishing topics configuration
+# Input topics
+gps_input_topic: "/fix"
+imu_input_topic: "/imu"
+
+# Output topics
+gps_output_topic: "/odometry/gps"
+filtered_gps_topic: "/fix_filtered"

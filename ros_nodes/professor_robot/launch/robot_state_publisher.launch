@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- Robot State Publisher Launch File for Innok Heros -->
+  <!-- Publishes robot URDF and transforms for navigation -->
+
+  <!-- Load robot description parameter -->
+  <param name="robot_description" 
+         command="$(find xacro)/xacro $(find professor_robot)/urdf/my__robot.urdf" />
+
+  <!-- Robot State Publisher -->
+  <node name="robot_state_publisher" pkg="robot_state_publisher" type="robot_state_publisher">
+    <param name="publish_frequency" value="30.0"/>
+    <param name="tf_prefix" value=""/>
+  </node>
+
+  <!-- Joint State Publisher (for static joints) -->
+  <node name="joint_state_publisher" pkg="joint_state_publisher" type="joint_state_publisher">
+    <param name="use_gui" value="false"/>
+    <param name="rate" value="30"/>
+  </node>
+
+</launch> 

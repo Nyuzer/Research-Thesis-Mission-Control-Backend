@@ -1,0 +1,37 @@
+<?xml version="1.0"?>
+<launch>
+    <!-- FIWARE MQTT Bridge Launch File -->
+    
+    <!-- Parameters -->
+    <arg name="robot_id" default="Professor_Robot_01" />
+    <arg name="config_file" default="$(find fiware_mqtt_bridge)/config/fiware_config.yaml" />
+    <arg name="simulation" default="true" />
+    <arg name="debug" default="false" />
+    
+    <!-- Launch FIWARE MQTT Bridge Node -->
+    <node name="fiware_mqtt_bridge" 
+          pkg="fiware_mqtt_bridge" 
+          type="fiware_mqtt_bridge.py" 
+          output="screen"
+          required="true">
+        
+        <!-- Parameters -->
+        <param name="robot_id" value="$(arg robot_id)" />
+        <param name="config_file" value="$(arg config_file)" />
+        <param name="simulation_mode" value="$(arg simulation)" />
+        
+        <!-- Remapping topics for integration -->
+        <remap from="/odom" to="/robot/odom" />
+        <remap from="/cmd_vel" to="/robot/cmd_vel" />
+        <remap from="/fiware/robot_status" to="/robot/fiware_status" />
+        
+    </node>
+    
+    <!-- Optional: Launch RViz for visualization when debugging -->
+    <node name="rviz" 
+          pkg="rviz" 
+          type="rviz" 
+          args="-d $(find fiware_mqtt_bridge)/config/fiware_debug.rviz"
+          if="$(arg debug)" />
+    
+</launch> 

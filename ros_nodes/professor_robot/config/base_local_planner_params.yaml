@@ -1,0 +1,46 @@
+# Clean Base Local Planner Parameters
+# Conservative, proven parameters for differential drive robots
+# Optimized for stability and reliable goal completion
+
+TrajectoryPlannerROS:
+  # Robot Configuration Parameters
+  max_vel_x: 0.5
+  min_vel_x: 0.1
+  max_vel_theta: 1.0
+  min_vel_theta: -1.0
+  min_in_place_vel_theta: 0.5
+
+  # Acceleration Limits
+  acc_lim_x: 2.5
+  acc_lim_y: 0.0 # Differential drive robot
+  acc_lim_theta: 3.2
+
+  # Goal Tolerance Parameters - reasonable tolerances
+  xy_goal_tolerance: 0.2
+  yaw_goal_tolerance: 0.1
+  latch_xy_goal_tolerance: false
+
+  # Forward Simulation Parameters - conservative
+  sim_time: 2.0
+  sim_granularity: 0.025
+  angular_sim_granularity: 0.025
+  vx_samples: 8
+  vtheta_samples: 20
+
+  # Trajectory Scoring Parameters - balanced
+  path_distance_bias: 32.0
+  goal_distance_bias: 24.0
+  occdist_scale: 0.01
+  forward_point_distance: 0.325
+  stop_time_buffer: 0.2
+  scaling_speed: 0.25
+  max_scaling_factor: 0.2
+
+  # Oscillation Prevention
+  oscillation_reset_dist: 0.25
+
+  # Global Plan Parameters
+  prune_plan: true
+
+  # Differential Drive Parameters
+  holonomic_robot: false

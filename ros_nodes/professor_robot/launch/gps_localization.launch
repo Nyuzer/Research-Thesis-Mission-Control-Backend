@@ -1,0 +1,28 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- GPS-based localization for real robot -->
+  
+  <!-- GPS Localization Node (replaces fake_localization.py) -->
+  <node name="gps_localization" pkg="professor_robot" type="gps_localization.py" output="screen">
+    <param name="gps_topic" value="/fix" />
+    <param name="coordinate_frame" value="EPSG:25832" />
+    <param name="map_frame" value="map" />
+    <param name="odom_frame" value="odom" />
+    <param name="base_frame" value="base_link" />
+  </node>
+  
+  <!-- Robot Localization: NavSat Transform Node -->
+  <node pkg="robot_localization" type="navsat_transform_node" name="navsat_transform_node" output="screen">
+    <rosparam file="$(find professor_robot)/config/navsat_transform.yaml" command="load" />
+    <remap from="/imu/data" to="/imu" />
+    <remap from="/gps/fix" to="/fix" />
+    <remap from="/odometry/gps" to="/odometry/gps" />
+  </node>
+  
+  <!-- Robot Localization: EKF Localization Node -->
+  <node pkg="robot_localization" type="ekf_localization_node" name="ekf_localization_node" output="screen">
+    <rosparam file="$(find professor_robot)/config/ekf_localization.yaml" command="load" />
+    <remap from="/odometry/filtered" to="/odometry/filtered" />
+  </node>
+  
+</launch> 

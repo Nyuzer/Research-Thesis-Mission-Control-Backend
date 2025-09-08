@@ -1,0 +1,111 @@
+# FIWARE MQTT Configuration
+# Based on RendezvousFIWARE.pdf and professor's IoT Agent guidance
+
+# MQTT Broker Configuration
+mqtt:
+  # FIWARE MQTT BROKER (IoT Agent integration)
+  host: "mosquitto.ikt.fh-dortmund.de"
+  port: 8883
+  username: "iot-client"
+  password: "crYsARBqeT2R"
+  use_tls: true
+  ca_certs: null # Use system CA certificates
+  insecure: true # Skip certificate verification for development
+
+  # LOCAL MQTT FOR TESTING (commented out)
+  # host: "localhost"
+  # port: 1883
+  # username: ""
+  # password: ""
+  # use_tls: false
+  # ca_certs: null
+  # insecure: false
+
+# Robot Configuration
+robot:
+  id: "Professor_Robot_01"
+  type: "Robot"
+
+# FIWARE IoT Agent Topic Structure
+topics:
+  # Command topics (IoT Agent publishes commands to robot)
+  command:
+    pattern: "/8jggokgpepnvsb2uv4s40d59vk/Professor_Robot_01/cmd"
+
+  # State topics (robot publishes current state to IoT Agent)
+  state:
+    pattern: "/json/8jggokgpepnvsb2uv4s40d59vk/Professor_Robot_01/attrs"
+
+  # Command acknowledgment topics (robot publishes command acknowledgment)
+  command_ack:
+    pattern: "/json/8jggokgpepnvsb2uv4s40d59vk/Professor_Robot_01/attrs"
+
+# LOCAL MQTT Topic Structure (commented out for FIWARE mode)
+# topics:
+#   # Command topics (robot subscribes to receive missions)
+#   command:
+#     pattern: "robot/Professor_Robot_01/command"
+#
+#   # State topics (robot publishes current state)
+#   state:
+#     pattern: "robot/Professor_Robot_01/state"
+#
+#   # Command acknowledgment topics (robot publishes command reception)
+#   command_ack:
+#     pattern: "robot/Professor_Robot_01/ack"
+
+# Robot State Management
+state:
+  # 8 core states as defined in scratchpad
+  states:
+    - "On Service" # Robot operational, ready for missions
+    - "Idle" # Waiting for mission commands
+    - "Mission Received" # MQTT CommandMessage received
+    - "Planning" # Map validation, path generation
+    - "Mission Execution" # Navigation active
+    - "Mission Completed" # Goal achieved
+    - "Error" # Navigation failure, hardware fault
+    - "Charging" # Battery charging mode
+
+  initial_state: "On Service"
+
+  # State publishing frequency (Hz)
+  publish_rate: 1.0
+
+  # Position simulation (for testing without GPS)
+  simulation:
+    enabled: true # Set to FALSE for GPS mode - enables odom_callback updates
+    initial_position: [80.0, 17.0, 0.0] # x, y, theta (only used when enabled=true)
+    # NOTE: When simulation=false, position comes from /odom topic automatically
+    # GPS localization publishes /odom → fiware_mqtt_bridge receives it → reports to FIWARE
+
+# Navigation Integration
+navigation:
+  # Move base action server
+  move_base_action: "/move_base"
+
+  # Goal tolerance
+  goal_tolerance: 0.5 # meters
+
+  # Timeout for navigation goals
+  goal_timeout: 300 # seconds
+
+# Map Management
+maps:
+  # Backend API for map download
+  backend_url: "http://localhost:8000/api/maps"
+
+  # Local map storage
+  local_path: "/tmp/fiware_maps"
+
+  # Current map tracking
+  current_map_id: null
+
+# Mission Control Backend
+backend:
+  url: "http://localhost:8000"
+
+# Logging
+logging:
+  level: "INFO" # DEBUG, INFO, WARN, ERROR
+  mqtt_debug: true # Enable for FIWARE debugging

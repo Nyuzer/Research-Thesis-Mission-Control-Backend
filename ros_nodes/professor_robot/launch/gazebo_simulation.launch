@@ -1,0 +1,44 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- Gazebo Simulation Launch File for Professor Robot -->
+  
+  <!-- Launch Gazebo with empty world -->
+  <include file="$(find gazebo_ros)/launch/empty_world.launch">
+    <arg name="world_name" value="worlds/empty.world"/>
+    <arg name="paused" value="false"/>
+    <arg name="use_sim_time" value="true"/>
+    <arg name="gui" value="true"/>
+    <arg name="headless" value="false"/>
+    <arg name="debug" value="false"/>
+  </include>
+
+  <!-- Send robot description to parameter server -->
+  <param name="robot_description" command="cat '$(find professor_robot)/urdf/my__robot.urdf'"/>
+
+  <!-- Spawn the robot in Gazebo -->
+  <node name="spawn_professor_robot" pkg="gazebo_ros" type="spawn_model"
+        args="-urdf -param robot_description -model professor_robot -x 0 -y 0 -z 0.5"
+        output="screen"/>
+
+  <!-- Robot state publisher -->
+  <node name="robot_state_publisher" pkg="robot_state_publisher" type="robot_state_publisher"/>
+
+  <!-- Joint state publisher -->
+  <node name="joint_state_publisher" pkg="joint_state_publisher" type="joint_state_publisher"/>
+
+  <!-- Controller manager and controllers -->
+  <rosparam file="$(find professor_robot)/config/controllers.yaml" command="load"/>
+  
+  <node name="controller_spawner" pkg="controller_manager" type="spawner" 
+        args="joint_state_controller
+              wheel_rear_left_velocity_controller
+              wheel_rear_right_velocity_controller
+              wheel_front_left_velocity_controller  
+              wheel_front_right_velocity_controller"
+        respawn="false" output="screen"/>
+
+  <!-- Differential drive controller (if available) -->
+  <node name="diff_drive_spawner" pkg="controller_manager" type="spawner"
+        args="diff_drive_controller" respawn="false" output="screen"/>
+
+</launch> 

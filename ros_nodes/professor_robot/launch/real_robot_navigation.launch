@@ -1,0 +1,47 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- Real Robot Navigation Launch File for Professor Robot -->
+  <!-- Configured for real robot with GNSS localization and speed limiting -->
+
+  <!-- Arguments -->
+  <arg name="map_file" default="$(find professor_robot)/maps/occupancy_grid.yaml"/>
+  <arg name="open_rviz" default="true"/>
+  <arg name="speed_scale" default="0.2" doc="Speed scaling factor (0.2 = 20% speed)"/>
+
+  <!-- Map Management -->
+  <!-- Dynamic map server managed by dedicated map_manager node -->
+  <node name="map_manager" pkg="professor_robot" type="map_manager.py" output="screen" />
+
+  <!-- Robot State Publisher -->
+  <include file="$(find professor_robot)/launch/robot_state_publisher.launch" />
+
+  <!-- GNSS-based localization for real robot -->
+  <node name="gnss_localization" pkg="professor_robot" type="gnss_localization.py" output="screen">
+    <param name="use_real_coordinates" value="true" />
+  </node>
+  <node name="robot_info" pkg="rostopic" type="rostopic" 
+        args="pub -1 /robot/localization_mode std_msgs/String 'GNSS_LOCALIZATION'" />
+
+  <!-- Speed Limiter (enabled by default for safety) -->
+  <node name="speed_limiter" pkg="professor_robot" type="speed_limiter.py" output="screen">
+    <param name="speed_scale" value="$(arg speed_scale)" />
+  </node>
+
+  <!-- Move Base Navigation -->
+  <node pkg="move_base" type="move_base" respawn="false" name="move_base" output="screen">
+    <!-- Load parameter files - Clean, simplified configuration -->
+    <rosparam file="$(find professor_robot)/config/costmap_common_params.yaml" command="load" ns="global_costmap" />
+    <rosparam file="$(find professor_robot)/config/costmap_common_params.yaml" command="load" ns="local_costmap" />
+    <rosparam file="$(find professor_robot)/config/local_costmap_params.yaml" command="load" />
+    <rosparam file="$(find professor_robot)/config/global_costmap_params.yaml" command="load" />
+    <rosparam file="$(find professor_robot)/config/base_local_planner_params.yaml" command="load" />
+    <rosparam file="$(find professor_robot)/config/move_base_params.yaml" command="load" />
+  </node>
+
+  <!-- RViz Visualization (optional) -->
+  <group if="$(arg open_rviz)">
+    <node name="rviz" pkg="rviz" type="rviz" 
+          args="-d $(find professor_robot)/launch/professor_robot.rviz" />
+  </group>
+
+</launch> 

@@ -1,0 +1,609 @@
+# Production EKF Localization Configuration
+# Optimized for professional GNSS/INS hardware (Septentrio, Ublox F9P, etc.)
+
+# High-frequency output for production navigation
+frequency: 50.0
+
+# Shorter sensor timeout for production responsiveness
+sensor_timeout: 0.1
+
+# Two-dimensional mode for ground robots
+two_d_mode: true
+
+# Transform settings
+transform_time_offset: 0.0
+transform_timeout: 0.0
+
+# Enhanced diagnostics for production monitoring
+print_diagnostics: true
+debug: false
+
+# Frame configuration
+map_frame: map
+odom_frame: odom
+base_link_frame: base_link
+world_frame: map
+
+# Production GNSS odometry (primary position source)
+odom0: /gnss/odometry
+odom0_config: [
+    true, # x - High-accuracy GNSS position
+    true, # y - High-accuracy GNSS position
+    false, # z - Ignore for 2D navigation
+    false, # roll - Ignore for ground robot
+    false, # pitch - Ignore for ground robot
+    true, # yaw - Use INS orientation if available
+    true, # vx - Use GNSS/INS velocity
+    true, # vy - Use GNSS/INS velocity
+    false, # vz - Ignore for 2D navigation
+    false, # vroll - Ignore for ground robot
+    false, # vpitch - Ignore for ground robot
+    true, # vyaw - Use INS angular velocity
+    false, # ax - Don't use acceleration (noisy)
+    false, # ay - Don't use acceleration (noisy)
+    false, # az - Ignore for 2D navigation
+  ]
+
+# GNSS is absolute positioning
+odom0_differential: false
+odom0_relative: false
+odom0_pose_use_child_frame: false
+odom0_queue_size: 20
+
+# Strict outlier rejection for production
+odom0_pose_rejection_threshold: 2.0 # 2 std dev (strict for high-accuracy GNSS)
+odom0_twist_rejection_threshold: 1.0 # 1 std dev for velocity
+
+# High-rate IMU (up to 200Hz)
+imu0: /imu
+imu0_config: [
+    false, # x - GNSS primary for position
+    false, # y - GNSS primary for position
+    false, # z - Ignore for 2D navigation
+    false, # roll - Ignore for ground robot
+    false, # pitch - Ignore for ground robot
+    true, # yaw - Use IMU for orientation refinement
+    false, # vx - GNSS primary for velocity
+    false, # vy - GNSS primary for velocity
+    false, # vz - Ignore for 2D navigation
+    false, # vroll - Ignore for ground robot
+    false, # vpitch - Ignore for ground robot
+    true, # vyaw - Use IMU for angular velocity
+    true, # ax - Use IMU for linear acceleration
+    true, # ay - Use IMU for linear acceleration
+    false, # az - Ignore for 2D navigation
+  ]
+
+# IMU is differential (relative measurements)
+imu0_differential: false
+imu0_relative: true
+imu0_queue_size: 100
+imu0_pose_rejection_threshold: 0.8
+imu0_twist_rejection_threshold: 0.8
+imu0_linear_acceleration_rejection_threshold: 0.8
+
+# Remove gravitational acceleration
+imu0_remove_gravitational_acceleration: true
+
+# Wheel odometry (secondary/backup source)
+# odom1: /wheel_odom
+# odom1_config: [
+#     false,  # x - GNSS primary
+#     false,  # y - GNSS primary
+#     false,  # z - Ignore
+#     false,  # roll - Ignore
+#     false,  # pitch - Ignore
+#     true,   # yaw - Backup orientation source
+#     true,   # vx - Backup velocity source
+#     false,  # vy - Differential drive assumption
+#     false,  # vz - Ignore
+#     false,  # vroll - Ignore
+#     false,  # vpitch - Ignore
+#     true,   # vyaw - Backup angular velocity
+#     false,  # ax - Don't use wheel acceleration
+#     false,  # ay - Don't use wheel acceleration
+#     false,  # az - Ignore
+# ]
+
+# Production-tuned process noise covariance
+# Lower values = trust model more, higher values = trust measurements more
+process_noise_covariance: [
+    # x position (trust GNSS highly)
+    0.02,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    # y position (trust GNSS highly)
+    0,
+    0.02,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    # z position (unused)
+    0,
+    0,
+    0.06,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    # roll (unused)
+    0,
+    0,
+    0,
+    0.03,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    # pitch (unused)
+    0,
+    0,
+    0,
+    0,
+    0.03,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    # yaw (trust INS/IMU)
+    0,
+    0,
+    0,
+    0,
+    0,
+    0.05,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    # vx (trust GNSS/INS velocity)
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0.02,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    # vy (trust GNSS/INS velocity)
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0.02,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    # vz (unused)
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0.04,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    # vroll (unused)
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0.01,
+    0,
+    0,
+    0,
+    0,
+    0,
+    # vpitch (unused)
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0.01,
+    0,
+    0,
+    0,
+    0,
+    # vyaw (trust IMU angular velocity)
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0.015,
+    0,
+    0,
+    0,
+    # ax (trust IMU acceleration)
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0.01,
+    0,
+    0,
+    # ay (trust IMU acceleration)
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0.01,
+    0,
+    # az (unused)
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0.015,
+  ]
+
+# Initial estimate error covariance - start with low uncertainty for GNSS
+initial_estimate_covariance: [
+    # x - Low initial uncertainty with GNSS
+    0.5,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    # y - Low initial uncertainty with GNSS
+    0,
+    0.5,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    # z (unused)
+    0,
+    0,
+    1e6,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    # roll (unused)
+    0,
+    0,
+    0,
+    1e6,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    # pitch (unused)
+    0,
+    0,
+    0,
+    0,
+    1e6,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    # yaw - Moderate uncertainty initially
+    0,
+    0,
+    0,
+    0,
+    0,
+    5.0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    # vx - Moderate velocity uncertainty
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    2.0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    # vy - Moderate velocity uncertainty
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    2.0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    # vz (unused)
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    1e6,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    # vroll (unused)
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    1e6,
+    0,
+    0,
+    0,
+    0,
+    0,
+    # vpitch (unused)
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    1e6,
+    0,
+    0,
+    0,
+    0,
+    # vyaw - Moderate angular velocity uncertainty
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    1.0,
+    0,
+    0,
+    0,
+    # ax - Moderate acceleration uncertainty
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    2.0,
+    0,
+    0,
+    # ay - Moderate acceleration uncertainty
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    2.0,
+    0,
+    # az (unused)
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    1e6,
+  ]
+
+# Production settings for stability and performance
+predict_to_current_time: true
+smooth_lagged_data: true
+history_length: 3.0
+
+# Enable mahalanobis distance gating for outlier rejection
+use_control: false
+stamped_control: false
+control_timeout: 0.2
+control_config: [true, false, false, false, false, true]
+
+# Dynamic process noise covariance (advanced feature)
+dynamic_process_noise_covariance: false
