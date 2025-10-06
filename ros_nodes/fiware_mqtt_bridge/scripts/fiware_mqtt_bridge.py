@@ -446,23 +446,24 @@ class FiwareMqttBridge:
             self.transition_state(RobotState.MISSION_RECEIVED, 
                                 f"Received {command_type} command")
             
-            # Store current mission - only if we're accepting it
-            self.current_mission = {
-                'missionId': mission_id,
-                'command': command_type,
-                'commandTime': command_time,
-                'waypoints': waypoints,
-                'mapId': map_id,
-                'receivedTime': datetime.utcnow().isoformat()
-            }
-            
             # Send acknowledgment
             self.send_command_acknowledgment(command_info, "ACCEPTED")
             
             # Process the command
             if command_type == "MOVE_TO":
+                # Store current mission - only if we're accepting it
+                self.current_mission = {
+                    'missionId': mission_id,
+                    'command': command_type,
+                    'commandTime': command_time,
+                    'waypoints': waypoints,
+                    'mapId': map_id,
+                    'receivedTime': datetime.utcnow().isoformat()
+                }
                 self.handle_move_to_command(waypoints, map_id)
             elif command_type == "STOP":
+                # For STOP commands, don't create a new mission - work with existing one
+                rospy.loginfo(f"Processing STOP command - keeping existing mission: {self.current_mission.get('missionId') if self.current_mission else 'None'}")
                 self.handle_stop_command()
             else:
                 rospy.logwarn(f"Unknown command type: {command_type}")
@@ -714,16 +715,6 @@ class FiwareMqttBridge:
                 self.move_base_client.cancel_all_goals()
                 rospy.loginfo("Navigation goals cancelled")
             
-            # Update mission status to cancelled if we have a current mission
-            if self.current_mission and 'missionId' in self.current_mission:
-                from datetime import datetime
-                import pytz
-                completed_time = datetime.now(pytz.timezone("Europe/Berlin")).isoformat()
-                self.update_mission_status_backend(self.current_mission['missionId'], "cancelled", completed_time=completed_time, error_message="Mission stopped by user command")
-            
-            # Clear current mission
-            self.current_mission = None
-            
             # Transition to idle state
             self.transition_state(RobotState.IDLE, "Mission stopped by user command")
             
@@ -768,9 +759,22 @@ class FiwareMqttBridge:
 
             elif status == GoalStatus.PREEMPTED:
                 rospy.logwarn("⚠️ Navigation goal PREEMPTED")
-                rospy.loginfo("🔄 Navigation was preempted (likely by STOP command) - robot already in IDLE")
-                # Don't transition to IDLE if already there
-                self.update_mission_status_backend(self.current_mission['missionId'], "cancelled", completed_time=datetime.now(pytz.timezone("Europe/Berlin")).isoformat(), error_message="Navigation preempted - likely by STOP command")
+                rospy.loginfo("🔄 Navigation was preempted (likely by STOP command)")
+
+                # Update mission status to cancelled if we have a current mission
+                if self.current_mission and 'missionId' in self.current_mission:
+                    completed_time = datetime.now(pytz.timezone("Europe/Berlin")).isoformat()
+                    self.update_mission_status_backend(self.current_mission['missionId'], "cancelled", completed_time=completed_time, error_message="Mission cancelled by STOP command")
+                    rospy.loginfo(f"Mission {self.current_mission['missionId']} marked as cancelled in backend")
+                    
+                    # Clear current mission after updating status
+                    self.current_mission = None
+                else:
+                    rospy.logwarn("No current mission to cancel")
+                
+                # Ensure robot is in IDLE state (in case it wasn't already)
+                if self.current_state != RobotState.IDLE:
+                    self.transition_state(RobotState.IDLE, "Navigation preempted - returning to idle")
 
             else:
                 rospy.logwarn(f"⚠️ Navigation goal finished with unknown status: {status}")

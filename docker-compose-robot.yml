@@ -1,0 +1,161 @@
+# Docker Compose setup for the FIWARE platform.
+# This setup includes all necessary services for the NGSI-V2 environment.
+
+version: "3.8"
+services:
+  # Orion is the Context Broker of the FIWARE platform. It handles collecting, managing, and providing context information
+  orion:
+    image: quay.io/fiware/orion:${ORION_VERSION}
+    hostname: orion
+    container_name: fiware-orion
+    depends_on:
+      - mongo-db
+    networks:
+      - default
+    expose:
+      - "${ORION_PORT}"
+    ports:
+      - "${ORION_PORT}:${ORION_PORT}"
+    command: -dbhost mongo-db -logLevel WARN -db oriontest -noCache -logForHumans -statTiming -statCounters -statSemWait -statNotifQueue
+    healthcheck: # This periodically checks if Orion is running correctly by calling its /version endpoint. If the check fails, it will attempt to restart the service.
+      test: curl --fail -s http://orion:${ORION_PORT}/version || exit 1
+      interval: 5s
+
+  # -------------------------------- Data Processing Services --------------------------------
+
+  # Real-time data processing and historical data storage.
+  quantumleap:
+    image: orchestracities/quantumleap:${QUANTUMLEAP_VERSION}
+    hostname: quantumleap
+    ports:
+      - "${QUANTUMLEAP_PORT}:${QUANTUMLEAP_PORT}"
+    depends_on:
+      - crate
+    environment:
+      - CRATE_HOST=${CRATE_HOST}
+      - REDIS_HOST=redis
+      - REDIS_PORT=${REDIS_PORT}
+      - LOGLEVEL=WARN
+
+  # In-memory data structure store for query cache used by quantumleap
+  redis:
+    image: redis:${REDIS_VERSION:-4}
+    ports:
+      - "${REDIS_PORT}:${REDIS_PORT}"
+    volumes:
+      - redis-db:/data
+
+  # -------------------------------- IoT Agent Services --------------------------------
+
+  # IoT-Agent is configured for JSON and is responsible for managing devices and translating protocols (like HTTP, MQTT, etc.) into NGSI format
+  iot-agent:
+    labels:
+      org.fiware: "tutorial"
+    image: quay.io/fiware/iotagent-json:3.5.0-distroless
+    hostname: iot-agent
+    container_name: fiware-iot-agent
+    depends_on:
+      - mongo-db
+    networks:
+      - default
+    expose:
+      - "${IOTA_NORTH_PORT}"
+      - "${IOTA_SOUTH_PORT}"
+    ports:
+      - "${IOTA_NORTH_PORT}:${IOTA_NORTH_PORT}"
+      - "${IOTA_SOUTH_PORT}:${IOTA_SOUTH_PORT}"
+    ulimits:
+      nofile:
+        soft: "65536"
+        hard: "65536"
+      core:
+        soft: "100000000"
+        hard: "100000000"
+      memlock:
+        soft: "100000000"
+        hard: "100000000"
+    environment:
+      - NODE_OPTIONS= --max-old-space-size=16384
+      - IOTA_CB_HOST=orion # name of the context broker to update context
+      - IOTA_CB_PORT=${ORION_PORT} # port the context broker listens on to update context
+      - IOTA_NORTH_PORT=${IOTA_NORTH_PORT}
+      - IOTA_REGISTRY_TYPE=mongodb #Whether to hold IoT device info in memory or in a database
+      - IOTA_LOG_LEVEL=INFO # The log level of the IoT Agent
+      - IOTA_TIMESTAMP=true # Supply timestamp information with each measurement
+      - IOTA_CB_NGSI_VERSION=v2 # use NGSIv2 when sending updates for active attributes
+      - IOTA_AUTOCAST=true # Ensure Ultralight number values are read as numbers not strings
+      - IOTA_MONGO_HOST=${MONGO_HOST} # The host name of MongoDB
+      - IOTA_MONGO_PORT=${MONGO_DB_PORT} # The port mongoDB is listening on
+      - IOTA_MONGO_DB=${IOTA_MONGO_DB} # The name of the database used in mongoDB      - IOTA_MQTT_PROTOCOL=mqtt
+      - IOTA_MQTT_HOST=${IOTA_MQTT_HOST} # The host name of the MQTT Broker
+      - IOTA_MQTT_PORT=${IOTA_MQTT_PORT} # The port the MQTT Broker is listening on to receive topics
+      - IOTA_MQTT_USERNAME=${IOTA_MQTT_USERNAME}
+      - IOTA_MQTT_PASSWORD=${IOTA_MQTT_PASSWORD}
+      - IOTA_MQTT_REJECT_UNAUTHORIZED=false
+      - IOTA_MQTT_PROTOCOL=tls
+      - IOTA_DEFAULT_RESOURCE= # Default is blank. I'm using MQTT so I don't need a resource
+      - IOTA_PROVIDER_URL=http://iot-agent:${IOTA_NORTH_PORT}
+      - IOTA_DEFAULT_TRANSPORT=MQTT
+      - IOTA_HTTP_PORT=${IOTA_SOUTH_PORT}
+      - IOTA_MULTI_CORE=true
+      - IOTA_AUTOPROVISION=true
+      - IOTA_AMQP_DISABLED=true
+    #command: ["node", "--expose-gc", "/opt/iotagent-json/bin/iotagent-json", "--", "config.js"]
+    healthcheck:
+      interval: 5s
+
+  #-------------------------------- Database Services --------------------------------
+
+  # This is the backend database used to store the context data that Orion processes.
+  mongo-db:
+    image: mongo:${MONGO_DB_VERSION}
+    hostname: ${MONGO_HOST}
+    container_name: db-mongo
+    expose:
+      - "${MONGO_DB_PORT}"
+    ports:
+      - "${MONGO_DB_PORT}:${MONGO_DB_PORT}"
+    networks:
+      - default
+    volumes:
+      - mongo-db:/data
+    healthcheck:
+      test: |
+        host=`hostname --ip-address || echo '127.0.0.1'`; 
+        mongo --quiet $host/test --eval 'quit(db.runCommand({ ping: 1 }).ok ? 0 : 2)' && echo 0 || echo 1
+      interval: 5s
+
+  #  SQL database for managing large volumes of data used by quantumleap
+  crate:
+    image: crate:${CRATE_VERSION:-4.6.5}
+    hostname: ${CRATE_HOST}
+    command: crate -Cauth.host_based.enabled=false
+      -Ccluster.name=democluster -Chttp.cors.enabled=true -Chttp.cors.allow-origin="*"
+    environment:
+      - LOG4J_FORMAT_MSG_NO_LOOKUPS=true
+      - CRATE_HEAP_SIZE=8g
+    ports:
+      # Admin UI
+      - "${CRATE_UI_PORT}:${CRATE_UI_PORT}"
+      # Transport protocol
+      - "${CRATE_TRANSPORT_PORT}:${CRATE_TRANSPORT_PORT}"
+    volumes:
+      - crate-db:/data
+      - ./crate-db_data:/data-export
+
+# Defined networks: one for general communication between services and one specifically for Portainer.
+networks:
+  portainer:
+    name: portainer
+  default:
+    labels:
+      org.fiware: "tutorial"
+    ipam:
+      config:
+        - subnet: 172.19.1.0/24
+
+# Several volumes are defined to ensure data persistence across container restarts.
+volumes:
+  crate-db: ~
+  redis-db: ~
+  mongo-db: ~
