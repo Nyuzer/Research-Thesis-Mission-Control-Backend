@@ -1,0 +1,52 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+ENV/
+env/
+.venv/
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Specific project venv
+mission_control_backend/venv/
+
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Specific project node_modules
+webui/node_modules/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# ROS/Catkin - ignore build artifacts but keep src
+catkin_ws/build/
+catkin_ws/devel/
+catkin_ws/logs/
+catkin_ws/.catkin_workspace
+catkin_ws/
+
+# Environment and secrets
+.env
+.env.local
+*.local
+
+# Logs
+*.log
+logs/
