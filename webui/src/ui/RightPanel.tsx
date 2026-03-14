@@ -1,12 +1,14 @@
-import { Box, Tab, Tabs, TextField, Button, Stack } from "@mui/material";
 import { useState } from "react";
-import { useSnackbar } from "notistack";
 import { useSelectionStore } from "../utils/state";
 import { sendMissionInstant, sendMissionScheduled } from "../utils/api";
+import { showToast } from "@/lib/toast";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Button } from "@/components/ui/button";
+import { Send } from "lucide-react";
 
 export default function RightPanel() {
-  const [tab, setTab] = useState(0);
-  const { enqueueSnackbar } = useSnackbar();
   const robotId = useSelectionStore((s) => s.selectedRobotId);
   const mapId = useSelectionStore((s) => s.selectedMapId);
   const destX = useSelectionStore((s) => s.destX);
@@ -18,9 +20,7 @@ export default function RightPanel() {
 
   const onSendInstant = async () => {
     if (!ready) {
-      enqueueSnackbar("Select robot, map, and a valid destination", {
-        variant: "warning",
-      });
+      showToast("Select robot, map, and a valid destination", "warning");
       return;
     }
     try {
@@ -30,21 +30,19 @@ export default function RightPanel() {
         x: destX!,
         y: destY!,
       });
-      enqueueSnackbar("Mission sent", { variant: "success" });
+      showToast("Mission sent", "success");
     } catch (e: any) {
-      enqueueSnackbar(e?.message || "Send failed", { variant: "error" });
+      showToast(e?.message || "Send failed", "error");
     }
   };
 
   const onSendScheduled = async () => {
     if (!ready) {
-      enqueueSnackbar("Select robot, map, and a valid destination", {
-        variant: "warning",
-      });
+      showToast("Select robot, map, and a valid destination", "warning");
       return;
     }
     if (!scheduledTime && !cron) {
-      enqueueSnackbar("Provide scheduled time or cron", { variant: "warning" });
+      showToast("Provide scheduled time or cron", "warning");
       return;
     }
     try {
@@ -56,98 +54,110 @@ export default function RightPanel() {
         scheduledTime: scheduledTime || undefined,
         cron: cron || undefined,
       });
-      enqueueSnackbar("Scheduled mission created", { variant: "success" });
+      showToast("Scheduled mission created", "success");
     } catch (e: any) {
-      enqueueSnackbar(e?.message || "Schedule failed", { variant: "error" });
+      showToast(e?.message || "Schedule failed", "error");
     }
   };
+
+  const coordFields = (
+    <div className="grid grid-cols-2 md:grid-cols-1 gap-2">
+      <div className="space-y-1">
+        <Label className="text-[10px] text-muted-foreground uppercase tracking-wider">
+          X (EPSG:25832)
+        </Label>
+        <Input
+          readOnly
+          value={destX ?? ""}
+          className="font-mono text-sm bg-secondary/30 h-8"
+        />
+      </div>
+      <div className="space-y-1">
+        <Label className="text-[10px] text-muted-foreground uppercase tracking-wider">
+          Y (EPSG:25832)
+        </Label>
+        <Input
+          readOnly
+          value={destY ?? ""}
+          className="font-mono text-sm bg-secondary/30 h-8"
+        />
+      </div>
+    </div>
+  );
+
   return (
-    <Box p={2}>
-      <Tabs value={tab} onChange={(_, v) => setTab(v)}>
-        <Tab label="Regular" />
-        <Tab label="Scheduled" />
-        <Tab label="CRON" />
+    <div className="p-3">
+      <Tabs defaultValue="regular">
+        <TabsList className="w-full bg-secondary/50">
+          <TabsTrigger value="regular" className="flex-1 text-xs">
+            Regular
+          </TabsTrigger>
+          <TabsTrigger value="scheduled" className="flex-1 text-xs">
+            Scheduled
+          </TabsTrigger>
+          <TabsTrigger value="cron" className="flex-1 text-xs">
+            CRON
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="regular" className="mt-3 space-y-3">
+          {coordFields}
+          <Button
+            className="w-full gap-2"
+            disabled={!ready}
+            onClick={onSendInstant}
+          >
+            <Send className="h-4 w-4" />
+            Send Mission
+          </Button>
+        </TabsContent>
+
+        <TabsContent value="scheduled" className="mt-3 space-y-3">
+          {coordFields}
+          <div className="space-y-1">
+            <Label className="text-[10px] text-muted-foreground uppercase tracking-wider">
+              Scheduled Time
+            </Label>
+            <Input
+              type="datetime-local"
+              value={scheduledTime}
+              onChange={(e) => setScheduledTime(e.target.value)}
+              className="h-8 text-sm"
+            />
+          </div>
+          <Button
+            className="w-full gap-2"
+            disabled={!ready}
+            onClick={onSendScheduled}
+          >
+            <Send className="h-4 w-4" />
+            Send Mission
+          </Button>
+        </TabsContent>
+
+        <TabsContent value="cron" className="mt-3 space-y-3">
+          {coordFields}
+          <div className="space-y-1">
+            <Label className="text-[10px] text-muted-foreground uppercase tracking-wider">
+              CRON (m h dom mon dow)
+            </Label>
+            <Input
+              placeholder="0 9 * * *"
+              value={cron}
+              onChange={(e) => setCron(e.target.value)}
+              className="h-8 text-sm font-mono"
+            />
+          </div>
+          <Button
+            className="w-full gap-2"
+            disabled={!ready}
+            onClick={onSendScheduled}
+          >
+            <Send className="h-4 w-4" />
+            Send Mission
+          </Button>
+        </TabsContent>
       </Tabs>
-      {tab === 0 && (
-        <Stack spacing={1} mt={2}>
-          <TextField
-            size="small"
-            label="X (EPSG:25832)"
-            value={destX ?? ""}
-            InputProps={{ readOnly: true }}
-          />
-          <TextField
-            size="small"
-            label="Y (EPSG:25832)"
-            value={destY ?? ""}
-            InputProps={{ readOnly: true }}
-          />
-          <Button variant="contained" onClick={onSendInstant} disabled={!ready}>
-            Send
-          </Button>
-        </Stack>
-      )}
-      {tab === 1 && (
-        <Stack spacing={1} mt={2}>
-          <TextField
-            size="small"
-            label="X (EPSG:25832)"
-            value={destX ?? ""}
-            InputProps={{ readOnly: true }}
-          />
-          <TextField
-            size="small"
-            label="Y (EPSG:25832)"
-            value={destY ?? ""}
-            InputProps={{ readOnly: true }}
-          />
-          <TextField
-            size="small"
-            type="datetime-local"
-            label="Scheduled time"
-            InputLabelProps={{ shrink: true }}
-            value={scheduledTime}
-            onChange={(e) => setScheduledTime(e.target.value)}
-          />
-          <Button
-            variant="contained"
-            onClick={onSendScheduled}
-            disabled={!ready}
-          >
-            Send
-          </Button>
-        </Stack>
-      )}
-      {tab === 2 && (
-        <Stack spacing={1} mt={2}>
-          <TextField
-            size="small"
-            label="X (EPSG:25832)"
-            value={destX ?? ""}
-            InputProps={{ readOnly: true }}
-          />
-          <TextField
-            size="small"
-            label="Y (EPSG:25832)"
-            value={destY ?? ""}
-            InputProps={{ readOnly: true }}
-          />
-          <TextField
-            size="small"
-            label="CRON (m h dom mon dow)"
-            placeholder="0 9 * * *"
-            value={cron}
-            onChange={(e) => setCron(e.target.value)}
-          />
-          <Button
-            variant="contained"
-            onClick={onSendScheduled}
-            disabled={!ready}
-          >
-            Send
-          </Button>
-        </Stack>
-      )}
-    </Box>
+    </div>
   );
 }

@@ -1,19 +1,77 @@
-import {
-  Box,
-  Typography,
-  Stack,
-  Button,
-  Table,
-  TableHead,
-  TableRow,
-  TableCell,
-  TableBody,
-  TablePagination,
-} from "@mui/material";
 import { useQuery } from "@tanstack/react-query";
 import { fetchMaps, uploadMap, deleteMap } from "../utils/api";
-import { useRef, useState } from "react";
-import { useSnackbar } from "notistack";
+import { useRef, useState, useEffect, useCallback } from "react";
+import ConfirmDeleteDialog from "@/components/ConfirmDeleteDialog";
+import { showToast } from "@/lib/toast";
+import { Button } from "@/components/ui/button";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import DataTablePagination from "@/components/DataTablePagination";
+import { Trash2, Upload, X } from "lucide-react";
+
+/* Mobile card for a single map row */
+function MapCard({
+  m,
+  imgMeta,
+  onImgLoad,
+  onImageClick,
+  onDelete,
+}: {
+  m: any;
+  imgMeta: Record<string, { w: number; h: number }>;
+  onImgLoad: (mapId: string, ev: React.SyntheticEvent<HTMLImageElement>) => void;
+  onImageClick: (src: string, name: string) => void;
+  onDelete: () => void;
+}) {
+  return (
+    <div className="border border-border rounded-lg p-3 bg-card space-y-2">
+      <div className="flex gap-3">
+        <img
+          src={`/api/maps/${m.mapId}/image`}
+          alt={m.name}
+          className="w-16 h-16 object-cover rounded border border-border cursor-pointer hover:opacity-80 transition-opacity shrink-0"
+          onLoad={(e) => onImgLoad(m.mapId, e)}
+          onClick={() => onImageClick(`/api/maps/${m.mapId}/image`, m.name || m.mapId)}
+        />
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center justify-between">
+            <span className="text-sm font-medium truncate">{m.name || m.mapId}</span>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 text-muted-foreground hover:text-destructive shrink-0"
+              onClick={onDelete}
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </Button>
+          </div>
+          <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-xs mt-1">
+            <span className="text-muted-foreground">Resolution</span>
+            <span className="font-mono">{m.resolution}</span>
+            <span className="text-muted-foreground">Size</span>
+            <span className="font-mono">
+              {imgMeta[m.mapId]?.w
+                ? `${imgMeta[m.mapId].w}\u00d7${imgMeta[m.mapId].h}`
+                : "\u2014"}
+            </span>
+            <span className="text-muted-foreground">Origin</span>
+            <span className="font-mono truncate">
+              {Array.isArray(m.origin)
+                ? `${m.origin[0]}, ${m.origin[1]}`
+                : "\u2014"}
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export default function MapsPage() {
   const { data, refetch } = useQuery({
@@ -22,13 +80,14 @@ export default function MapsPage() {
   });
   const yamlRef = useRef<HTMLInputElement | null>(null);
   const imgRef = useRef<HTMLInputElement | null>(null);
-  const { enqueueSnackbar } = useSnackbar();
   const [uploading, setUploading] = useState(false);
   const [page, setPage] = useState(0);
   const [rows, setRows] = useState(10);
   const [imgMeta, setImgMeta] = useState<
     Record<string, { w: number; h: number }>
   >({});
+  const [lightbox, setLightbox] = useState<{ src: string; name: string } | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
 
   const handleImgLoad = (
     mapId: string,
@@ -45,15 +104,15 @@ export default function MapsPage() {
     const yamlFile = yamlRef.current?.files?.[0];
     const imgFile = imgRef.current?.files?.[0];
     if (!yamlFile || !imgFile) {
-      enqueueSnackbar("Select YAML and PNG/PGM", { variant: "warning" });
+      showToast("Select YAML and PNG/PGM", "warning");
       return;
     }
     if (!yamlFile.name.endsWith(".yaml")) {
-      enqueueSnackbar("YAML must have .yaml extension", { variant: "warning" });
+      showToast("YAML must have .yaml extension", "warning");
       return;
     }
     if (!(imgFile.name.endsWith(".png") || imgFile.name.endsWith(".pgm"))) {
-      enqueueSnackbar("Image must be .png or .pgm", { variant: "warning" });
+      showToast("Image must be .png or .pgm", "warning");
       return;
     }
     const form = new FormData();
@@ -62,124 +121,211 @@ export default function MapsPage() {
     try {
       setUploading(true);
       await uploadMap(form);
-      enqueueSnackbar("Map uploaded", { variant: "success" });
+      showToast("Map uploaded", "success");
       yamlRef.current!.value = "";
       imgRef.current!.value = "";
       refetch();
     } catch (e: any) {
-      enqueueSnackbar(e?.message || "Upload failed", { variant: "error" });
+      showToast(e?.message || "Upload failed", "error");
     } finally {
       setUploading(false);
     }
   };
 
-  const onDelete = async (mapId: string) => {
+  const onDeleteConfirmed = useCallback(async () => {
+    if (!deleteTarget) return;
     try {
-      await deleteMap(mapId);
-      enqueueSnackbar("Map deleted", { variant: "success" });
+      await deleteMap(deleteTarget);
+      showToast("Map deleted", "success");
       refetch();
     } catch (e: any) {
-      enqueueSnackbar(e?.message || "Delete failed", { variant: "error" });
+      showToast(e?.message || "Delete failed", "error");
+    } finally {
+      setDeleteTarget(null);
     }
-  };
+  }, [deleteTarget, refetch]);
+
+  // Close lightbox on Escape
+  const closeLightbox = useCallback(() => setLightbox(null), []);
+  useEffect(() => {
+    if (!lightbox) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") closeLightbox();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [lightbox, closeLightbox]);
+
+  const openLightbox = (src: string, name: string) => setLightbox({ src, name });
 
   return (
-    <Box p={2}>
-      <Typography variant="h5" mb={2}>
-        Maps Manager
-      </Typography>
-      <Stack
-        direction={{ xs: "column", sm: "row" }}
-        spacing={1}
-        mb={2}
-        alignItems="center"
-      >
-        <Button variant="outlined" onClick={() => yamlRef.current?.click()}>
+    <div className="p-3 sm:p-4 max-w-7xl mx-auto">
+      <h2 className="text-lg font-semibold mb-3">Maps Manager</h2>
+
+      <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 mb-4">
+        <Button
+          variant="outline"
+          size="sm"
+          className="gap-1.5"
+          onClick={() => yamlRef.current?.click()}
+        >
+          <Upload className="h-3.5 w-3.5" />
           Choose YAML
         </Button>
         <input
           ref={yamlRef}
           type="file"
           accept=".yaml"
-          style={{ display: "none" }}
+          className="hidden"
         />
-        <Button variant="outlined" onClick={() => imgRef.current?.click()}>
+        <Button
+          variant="outline"
+          size="sm"
+          className="gap-1.5"
+          onClick={() => imgRef.current?.click()}
+        >
+          <Upload className="h-3.5 w-3.5" />
           Choose PNG/PGM
         </Button>
         <input
           ref={imgRef}
           type="file"
           accept=".png,.pgm"
-          style={{ display: "none" }}
+          className="hidden"
         />
-        <Button variant="contained" onClick={onUpload} disabled={uploading}>
-          Upload
+        <Button size="sm" onClick={onUpload} disabled={uploading}>
+          {uploading ? "Uploading..." : "Upload"}
         </Button>
-      </Stack>
+      </div>
 
-      <Table size="small">
-        <TableHead>
-          <TableRow>
-            <TableCell>Preview</TableCell>
-            <TableCell>Map ID</TableCell>
-            <TableCell>Name</TableCell>
-            <TableCell>Resolution</TableCell>
-            <TableCell>Size (px)</TableCell>
-            <TableCell>Origin</TableCell>
-            <TableCell>Uploaded</TableCell>
-            <TableCell align="right">Actions</TableCell>
-          </TableRow>
-        </TableHead>
-        <TableBody>
-          {data?.maps?.slice(page * rows, page * rows + rows).map((m: any) => (
-            <TableRow key={m.mapId} hover>
-              <TableCell>
-                <img
-                  src={`/api/maps/${m.mapId}/image`}
-                  alt={m.name}
-                  style={{ width: 80, height: "auto" }}
-                  onLoad={(e) => handleImgLoad(m.mapId, e)}
-                />
-              </TableCell>
-              <TableCell>{m.mapId}</TableCell>
-              <TableCell>{m.name}</TableCell>
-              <TableCell>{m.resolution}</TableCell>
-              <TableCell>
-                {imgMeta[m.mapId]?.w
-                  ? `${imgMeta[m.mapId].w} × ${imgMeta[m.mapId].h}`
-                  : "—"}
-              </TableCell>
-              <TableCell>
-                {Array.isArray(m.origin)
-                  ? `${m.origin[0]}, ${m.origin[1]}, ${m.origin[2] ?? 0}`
-                  : "—"}
-              </TableCell>
-              <TableCell>{m.uploadTime}</TableCell>
-              <TableCell align="right">
-                <Button
-                  color="error"
-                  size="small"
-                  onClick={() => onDelete(m.mapId)}
-                >
-                  Delete
-                </Button>
-              </TableCell>
-            </TableRow>
+      {/* Mobile: cards */}
+      <div className="space-y-2 md:hidden">
+        {data?.maps
+          ?.slice(page * rows, page * rows + rows)
+          .map((m: any) => (
+            <MapCard
+              key={m.mapId}
+              m={m}
+              imgMeta={imgMeta}
+              onImgLoad={handleImgLoad}
+              onImageClick={openLightbox}
+              onDelete={() => setDeleteTarget(m.mapId)}
+            />
           ))}
-        </TableBody>
-      </Table>
-      <TablePagination
-        component="div"
+      </div>
+
+      {/* Desktop: table */}
+      <div className="hidden md:block rounded-md border border-border">
+        <Table>
+          <TableHeader>
+            <TableRow className="hover:bg-transparent">
+              <TableHead className="text-xs">Preview</TableHead>
+              <TableHead className="text-xs">Map ID</TableHead>
+              <TableHead className="text-xs">Name</TableHead>
+              <TableHead className="text-xs">Resolution</TableHead>
+              <TableHead className="text-xs">Size (px)</TableHead>
+              <TableHead className="text-xs">Origin</TableHead>
+              <TableHead className="text-xs">Uploaded</TableHead>
+              <TableHead className="text-xs text-right">Actions</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {data?.maps
+              ?.slice(page * rows, page * rows + rows)
+              .map((m: any) => (
+                <TableRow key={m.mapId}>
+                  <TableCell>
+                    <img
+                      src={`/api/maps/${m.mapId}/image`}
+                      alt={m.name}
+                      className="w-20 h-auto rounded border border-border cursor-pointer hover:opacity-80 transition-opacity"
+                      onLoad={(e) => handleImgLoad(m.mapId, e)}
+                      onClick={() => openLightbox(`/api/maps/${m.mapId}/image`, m.name || m.mapId)}
+                    />
+                  </TableCell>
+                  <TableCell className="text-xs font-mono">
+                    {m.mapId}
+                  </TableCell>
+                  <TableCell className="text-xs">{m.name}</TableCell>
+                  <TableCell className="text-xs font-mono">
+                    {m.resolution}
+                  </TableCell>
+                  <TableCell className="text-xs font-mono">
+                    {imgMeta[m.mapId]?.w
+                      ? `${imgMeta[m.mapId].w} \u00d7 ${imgMeta[m.mapId].h}`
+                      : "\u2014"}
+                  </TableCell>
+                  <TableCell className="text-xs font-mono">
+                    {Array.isArray(m.origin)
+                      ? `${m.origin[0]}, ${m.origin[1]}, ${m.origin[2] ?? 0}`
+                      : "\u2014"}
+                  </TableCell>
+                  <TableCell className="text-xs text-muted-foreground">
+                    {m.uploadTime}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                      onClick={() => setDeleteTarget(m.mapId)}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+          </TableBody>
+        </Table>
+      </div>
+      <DataTablePagination
         count={data?.maps?.length || 0}
         page={page}
-        onPageChange={(_, p) => setPage(p)}
         rowsPerPage={rows}
-        onRowsPerPageChange={(e) => {
-          setRows(parseInt(e.target.value, 10));
+        onPageChange={setPage}
+        onRowsPerPageChange={(r) => {
+          setRows(r);
           setPage(0);
         }}
-        rowsPerPageOptions={[5, 10, 25, 50]}
       />
-    </Box>
+
+      <ConfirmDeleteDialog
+        open={deleteTarget !== null}
+        onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}
+        onConfirm={onDeleteConfirmed}
+        title="Delete map?"
+        description="This will permanently delete this map and its files. This action cannot be undone."
+      />
+
+      {/* Lightbox overlay */}
+      {lightbox && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4"
+          onClick={closeLightbox}
+        >
+          <div
+            className="relative max-w-[90vw] max-h-[90vh]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <Button
+              variant="ghost"
+              size="icon"
+              className="absolute -top-10 right-0 text-white hover:text-white/80 hover:bg-white/10"
+              onClick={closeLightbox}
+            >
+              <X className="h-5 w-5" />
+            </Button>
+            <p className="absolute -top-10 left-0 text-sm text-white/70 truncate max-w-[70vw]">
+              {lightbox.name}
+            </p>
+            <img
+              src={lightbox.src}
+              alt={lightbox.name}
+              className="max-w-[90vw] max-h-[85vh] object-contain rounded-lg border border-border"
+            />
+          </div>
+        </div>
+      )}
+    </div>
   );
 }

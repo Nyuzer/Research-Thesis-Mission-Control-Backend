@@ -3,14 +3,11 @@ import L from "leaflet";
 // @ts-ignore
 import "proj4leaflet";
 import proj4 from "proj4";
-import { Box } from "@mui/material";
 
 import { useSelectionStore } from "../utils/state";
 import yaml from "js-yaml";
 import { fetchMapFiles } from "../utils/api";
-import { useSnackbar } from "notistack";
-import RobotSvg from "../robot-ai.svg";
-import GoalSvg from "../goal.svg";
+import { showToast } from "@/lib/toast";
 
 // EPSG:25832 proj string
 proj4.defs(
@@ -27,6 +24,99 @@ const CRS_25832: any = new (L as any).Proj.CRS(
   }
 );
 
+/* ── Inline marker components (rendered inside the overlay <svg>) ── */
+
+function RobotMarker({ cx, cy, label, isSelected }: { cx: number; cy: number; label: string; isSelected: boolean }) {
+  const r = isSelected ? 8 : 6;
+  return (
+    <g>
+      {/* Sonar pulse ring */}
+      {isSelected && (
+        <circle cx={cx} cy={cy} r={r} fill="none" stroke="#22d3ee" strokeWidth="2" opacity="0">
+          <animate attributeName="r" from={String(r)} to={String(r + 18)} dur="1.8s" repeatCount="indefinite" />
+          <animate attributeName="opacity" from="0.7" to="0" dur="1.8s" repeatCount="indefinite" />
+        </circle>
+      )}
+      {/* Outer glow */}
+      <circle cx={cx} cy={cy} r={r + 3} fill={isSelected ? "#22d3ee" : "#38bdf8"} opacity="0.2" />
+      {/* Main dot */}
+      <circle cx={cx} cy={cy} r={r} fill={isSelected ? "#22d3ee" : "#38bdf8"} stroke="#0f172a" strokeWidth="1.5" />
+      {/* Inner highlight */}
+      <circle cx={cx} cy={cy} r={r * 0.4} fill="white" opacity="0.7" />
+      {/* Label */}
+      <text
+        x={cx}
+        y={cy - r - 6}
+        textAnchor="middle"
+        fill="white"
+        fontSize="10"
+        fontFamily="Inter, sans-serif"
+        fontWeight="600"
+        paintOrder="stroke"
+        stroke="#0f172a"
+        strokeWidth="3"
+        strokeLinejoin="round"
+      >
+        {label}
+      </text>
+    </g>
+  );
+}
+
+function DestinationMarker({ cx, cy }: { cx: number; cy: number }) {
+  const armLen = 10;
+  const gap = 5;
+  const r = 4;
+  return (
+    <g>
+      {/* Pulsing outer ring */}
+      <circle cx={cx} cy={cy} r={r + 2} fill="none" stroke="#f97316" strokeWidth="2" opacity="0">
+        <animate attributeName="r" from={String(r + 2)} to={String(r + 14)} dur="2s" repeatCount="indefinite" />
+        <animate attributeName="opacity" from="0.6" to="0" dur="2s" repeatCount="indefinite" />
+      </circle>
+      {/* Crosshair arms */}
+      <line x1={cx - armLen} y1={cy} x2={cx - gap} y2={cy} stroke="#f97316" strokeWidth="2" strokeLinecap="round" />
+      <line x1={cx + gap} y1={cy} x2={cx + armLen} y2={cy} stroke="#f97316" strokeWidth="2" strokeLinecap="round" />
+      <line x1={cx} y1={cy - armLen} x2={cx} y2={cy - gap} stroke="#f97316" strokeWidth="2" strokeLinecap="round" />
+      <line x1={cx} y1={cy + gap} x2={cx} y2={cy + armLen} stroke="#f97316" strokeWidth="2" strokeLinecap="round" />
+      {/* Outer ring */}
+      <circle cx={cx} cy={cy} r={r + 2} fill="none" stroke="#f97316" strokeWidth="1.5" opacity="0.5" />
+      {/* Center dot */}
+      <circle cx={cx} cy={cy} r={r} fill="#f97316" stroke="#0f172a" strokeWidth="1.5" />
+      <circle cx={cx} cy={cy} r={r * 0.4} fill="white" opacity="0.8" />
+      {/* Label */}
+      <text
+        x={cx}
+        y={cy - armLen - 4}
+        textAnchor="middle"
+        fill="#f97316"
+        fontSize="9"
+        fontFamily="Inter, sans-serif"
+        fontWeight="600"
+        paintOrder="stroke"
+        stroke="#0f172a"
+        strokeWidth="3"
+        strokeLinejoin="round"
+      >
+        DEST
+      </text>
+    </g>
+  );
+}
+
+/* ── Dashed line between robot and destination ── */
+function ConnectionLine({ x1, y1, x2, y2 }: { x1: number; y1: number; x2: number; y2: number }) {
+  return (
+    <line
+      x1={x1} y1={y1} x2={x2} y2={y2}
+      stroke="#f97316"
+      strokeWidth="1"
+      strokeDasharray="4 3"
+      opacity="0.5"
+    />
+  );
+}
+
 export default function MapView() {
   const mapDivRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<any>(null);
@@ -42,7 +132,6 @@ export default function MapView() {
   const robots = useSelectionStore((s) => s.robots);
   const dest = useSelectionStore((s) => ({ x: s.destX, y: s.destY }));
   const selectedRobotId = useSelectionStore((s) => s.selectedRobotId);
-  const { enqueueSnackbar } = useSnackbar();
 
   // Initialize Leaflet map once
   useEffect(() => {
@@ -97,7 +186,6 @@ export default function MapView() {
         const originY = Number(originArr[1] || 0);
         const freeThresh = Number(config.free_thresh ?? 0.196);
         const occupiedThresh = Number(config.occupied_thresh ?? 0.65);
-        // Optional byte-based config
         const freeValue =
           config.free_value !== undefined
             ? Number(config.free_value)
@@ -141,7 +229,6 @@ export default function MapView() {
             valueTolerance,
           });
           setImgSrc(absUrl);
-          // Prepare offscreen canvas for pixel sampling
           if (!offscreenCanvasRef.current) {
             offscreenCanvasRef.current = document.createElement("canvas");
           }
@@ -166,7 +253,6 @@ export default function MapView() {
         };
         img.src = absUrl;
       } catch (e) {
-        // eslint-disable-next-line no-console
         console.warn("Failed to load map files", e);
       }
     };
@@ -189,7 +275,6 @@ export default function MapView() {
   }, [robots]);
 
   const onImageClick = (ev: React.MouseEvent) => {
-    // compute world coords from image pixel
     const imgEl = ev.currentTarget as HTMLImageElement;
     if (!imgSize) return;
     const rect = imgEl.getBoundingClientRect();
@@ -199,10 +284,8 @@ export default function MapView() {
     const scaleY = imgSize.h / rect.height;
     const px = clickX * scaleX;
     const pyFromTop = clickY * scaleY;
-    // mapMeta is stored in store
     const meta = useSelectionStore.getState().mapMeta;
     if (!meta) return;
-    // Free-area validation using offscreen canvas and byte values
     const oc = offscreenCanvasRef.current;
     const octx = oc?.getContext("2d");
     if (oc && octx) {
@@ -215,7 +298,6 @@ export default function MapView() {
           b = d[2];
         let byteVal = Math.round(0.299 * r + 0.587 * g + 0.114 * b);
         if (meta.negate === 1) byteVal = 255 - byteVal;
-        // Default mapping if not provided in YAML
         const freeV = meta.freeValue ?? 0;
         const occV = meta.occupiedValue ?? 100;
         const unkV = meta.unknownValue ?? 255;
@@ -225,9 +307,7 @@ export default function MapView() {
         const isOccupied = near(byteVal, occV);
         const isUnknown = near(byteVal, unkV);
         if (!isFree || isOccupied || isUnknown) {
-          enqueueSnackbar("Selected point is not free (byte-based)", {
-            variant: "warning",
-          });
+          showToast("Selected point is not free (byte-based)", "warning");
           return;
         }
       }
@@ -236,8 +316,6 @@ export default function MapView() {
     const worldX = meta.originX + px * meta.resolution;
     const worldY = meta.originY + pyFromBottom * meta.resolution;
     setDest(worldX, worldY);
-    // draw destination as a small blue circle on overlay
-    // we will reuse robot layer later for Leaflet markers if needed
   };
 
   // Robot outside selected map warning
@@ -256,46 +334,25 @@ export default function MapView() {
     const key = `${selectedRobotId}:${meta.imageUrl}`;
     if (!inside && lastWarnRef.current !== key) {
       lastWarnRef.current = key;
-      enqueueSnackbar("Robot not inside selected map", { variant: "warning" });
+      showToast("Robot not inside selected map", "warning");
     }
   }, [robots, selectedRobotId]);
 
   return (
-    <Box position="relative" height="100%" width="100%">
+    <div className="relative h-full w-full">
       <div
         ref={mapDivRef}
-        style={{
-          position: "absolute",
-          inset: 0,
-          zIndex: 0,
-          pointerEvents: "none",
-          background: "transparent",
-        }}
+        className="absolute inset-0 z-0 pointer-events-none bg-transparent"
       />
-      <Box
-        sx={{
-          position: "absolute",
-          inset: 0,
-          zIndex: 1,
-          display: "flex",
-          justifyContent: "center",
-          alignItems: "flex-start",
-          overflow: "auto",
-          bgcolor: "background.paper",
-        }}
+      <div
         ref={overlayContainerRef}
+        className="absolute inset-0 z-[1] flex justify-center items-start overflow-auto bg-card"
       >
         {imgSrc && (
           <img
             src={imgSrc}
             alt="map"
-            style={{
-              maxWidth: "100%",
-              height: "auto",
-              cursor: "crosshair",
-              display: "block",
-              margin: "0 auto",
-            }}
+            className="max-w-full h-auto cursor-crosshair block mx-auto"
             onClick={onImageClick}
           />
         )}
@@ -325,6 +382,21 @@ export default function MapView() {
               return { cx, cy };
             };
 
+            // Pre-compute selected robot position for connection line
+            const selectedRobot = robots.find((r: any) => r.robotId === selectedRobotId);
+            let selectedRobotPixel: { cx: number; cy: number } | null = null;
+            if (selectedRobot && Array.isArray(selectedRobot.position25832)) {
+              const [wx, wy] = selectedRobot.position25832;
+              const p = toPixel(wx, wy);
+              if (isFinite(p.cx) && isFinite(p.cy)) selectedRobotPixel = p;
+            }
+
+            let destPixel: { cx: number; cy: number } | null = null;
+            if (dest.x != null && dest.y != null) {
+              const p = toPixel(dest.x!, dest.y!);
+              if (isFinite(p.cx) && isFinite(p.cy)) destPixel = p;
+            }
+
             return (
               <div
                 style={{
@@ -336,45 +408,42 @@ export default function MapView() {
                   pointerEvents: "none",
                 }}
               >
-                <svg width="100%" height="100%" style={{ display: "block" }}>
+                <svg width="100%" height="100%" style={{ display: "block", overflow: "visible" }}>
+                  {/* Connection line from selected robot to destination */}
+                  {selectedRobotPixel && destPixel && (
+                    <ConnectionLine
+                      x1={selectedRobotPixel.cx}
+                      y1={selectedRobotPixel.cy}
+                      x2={destPixel.cx}
+                      y2={destPixel.cy}
+                    />
+                  )}
+                  {/* Robot markers */}
                   {robots &&
                     robots.map((r: any) => {
                       if (!Array.isArray(r.position25832)) return null;
                       const [wx, wy] = r.position25832;
                       const { cx, cy } = toPixel(wx, wy);
                       if (!isFinite(cx) || !isFinite(cy)) return null;
-                      const size = 20;
                       return (
-                        <image
+                        <RobotMarker
                           key={r.robotId}
-                          href={RobotSvg}
-                          x={cx - size / 2}
-                          y={cy - size / 2}
-                          width={size}
-                          height={size}
+                          cx={cx}
+                          cy={cy}
+                          label={r.name || r.robotId}
+                          isSelected={r.robotId === selectedRobotId}
                         />
                       );
                     })}
-                  {dest.x != null &&
-                    dest.y != null &&
-                    (() => {
-                      const { cx, cy } = toPixel(dest.x!, dest.y!);
-                      if (!isFinite(cx) || !isFinite(cy)) return null;
-                      return (
-                        <image
-                          href={GoalSvg}
-                          x={cx - 18 / 2}
-                          y={cy - 18 / 2}
-                          width={18}
-                          height={18}
-                        />
-                      );
-                    })()}
+                  {/* Destination marker */}
+                  {destPixel && (
+                    <DestinationMarker cx={destPixel.cx} cy={destPixel.cy} />
+                  )}
                 </svg>
               </div>
             );
           })()}
-      </Box>
-    </Box>
+      </div>
+    </div>
   );
 }

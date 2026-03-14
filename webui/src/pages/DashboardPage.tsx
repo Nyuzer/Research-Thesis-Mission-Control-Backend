@@ -1,36 +1,22 @@
-import { Box, Divider } from "@mui/material";
 import TopBanner from "../ui/TopBanner";
-import LeftCommands from "../ui/LeftCommands";
 import RightPanel from "../ui/RightPanel";
 import MapView from "../ui/MapView";
+import { Separator } from "@/components/ui/separator";
 
 export default function DashboardPage() {
   return (
-    <Box display="flex" flexDirection="column" height="100%">
+    <div className="flex flex-col h-full md:h-full">
       <TopBanner />
-      <Divider />
-      <Box
-        display="grid"
-        gridTemplateColumns={{ xs: "1fr", md: "280px 1fr 320px" }}
-        gap={1}
-        flex={1}
-        minHeight={0}
-      >
-        <Box
-          sx={{
-            display: { xs: "none", md: "block" },
-            borderRight: "1px solid #eee",
-          }}
-        >
-          <LeftCommands />
-        </Box>
-        <Box>
+      <Separator />
+      {/* Desktop: side-by-side. Mobile: stacked with map on top */}
+      <div className="flex flex-col md:grid md:grid-cols-[1fr_340px] flex-1 min-h-0">
+        <div className="min-h-[300px] md:min-h-0 h-[50vh] md:h-auto">
           <MapView />
-        </Box>
-        <Box sx={{ borderLeft: "1px solid #eee" }}>
+        </div>
+        <div className="border-t md:border-t-0 md:border-l border-border">
           <RightPanel />
-        </Box>
-      </Box>
-    </Box>
+        </div>
+      </div>
+    </div>
   );
 }

@@ -1,17 +1,24 @@
-import {
-  Box,
-  Chip,
-  MenuItem,
-  Select,
-  Stack,
-  Typography,
-  Tooltip,
-} from "@mui/material";
 import { useQuery } from "@tanstack/react-query";
 import { useSelectionStore } from "../utils/state";
-import { fetchMaps, fetchRobots } from "../utils/api";
+import { fetchMaps, fetchRobots, stopRobot } from "../utils/api";
 import { useEffect, useRef, useState } from "react";
-import { useSnackbar } from "notistack";
+import { showToast } from "@/lib/toast";
+import { Badge } from "@/components/ui/badge";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { Button } from "@/components/ui/button";
+import { OctagonX } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 export default function TopBanner() {
   const { data: robots } = useQuery({
@@ -26,17 +33,17 @@ export default function TopBanner() {
   const wsConnected = useSelectionStore((s) => s.wsConnected);
   const currentMissionId = useSelectionStore((s) => s.currentMissionId);
   const robotsStore = useSelectionStore((s) => s.robots);
-  const { enqueueSnackbar } = useSnackbar();
 
   const robot =
     robotsStore?.find((r: any) => r.robotId === selectedRobotId) ||
     robots?.robots?.find((r: any) => r.robotId === selectedRobotId);
-  // Consider robot online if lastSeen is within 10 seconds
+
   const [tick, setTick] = useState(0);
   useEffect(() => {
     const t = setInterval(() => setTick((t) => t + 1), 1000);
     return () => clearInterval(t);
   }, []);
+
   let isFresh = false;
   let secondsAgo: number | null = null;
   if (robot?.lastSeen) {
@@ -49,7 +56,6 @@ export default function TopBanner() {
   }
   const robotStatus = isFresh ? "online" : "offline";
 
-  // Warn when selected robot transitions to offline
   const prevFreshRef = useRef<boolean | null>(null);
   const prevRobotRef = useRef<string | null>(null);
   useEffect(() => {
@@ -57,9 +63,7 @@ export default function TopBanner() {
     const prevRobot = prevRobotRef.current;
     if (selectedRobotId) {
       if (prevRobot === selectedRobotId && prevFresh === true && !isFresh) {
-        enqueueSnackbar("Selected robot went offline (no updates in >10s)", {
-          variant: "warning",
-        });
+        showToast("Selected robot went offline (no updates in >10s)", "warning");
       }
       prevFreshRef.current = isFresh;
       prevRobotRef.current = selectedRobotId;
@@ -69,82 +73,151 @@ export default function TopBanner() {
     }
   }, [isFresh, selectedRobotId, tick]);
 
-  // Reflect robots into global store for MapView
   const setRobots = useSelectionStore((s) => s.setRobots);
   useEffect(() => {
     if (robots?.robots) setRobots(robots.robots);
   }, [robots]);
 
+  const onStop = async () => {
+    if (!selectedRobotId) {
+      showToast("Select a robot first", "warning");
+      return;
+    }
+    try {
+      await stopRobot(selectedRobotId);
+      showToast("Stop command sent", "info");
+    } catch (e: any) {
+      showToast(e?.message || "Stop failed", "error");
+    }
+  };
+
   return (
-    <Box p={1} display="flex" alignItems="center" gap={2}>
-      <Stack direction="row" alignItems="center" gap={1}>
-        <Typography variant="body2">Robot:</Typography>
-        <Select
-          size="small"
-          value={selectedRobotId || ""}
-          onChange={(e) => setSelectedRobotId(e.target.value)}
-          displayEmpty
+    <div className="px-2 sm:px-3 py-2 space-y-2">
+      {/* Row 1: Selectors + Stop */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <div className="flex items-center gap-1.5">
+          <span className="text-xs text-muted-foreground font-medium hidden sm:inline">Robot</span>
+          <Select
+            value={selectedRobotId || ""}
+            onValueChange={setSelectedRobotId}
+          >
+            <SelectTrigger className="w-[130px] sm:w-[160px] h-8 text-xs bg-secondary/50">
+              <SelectValue placeholder="Select robot" />
+            </SelectTrigger>
+            <SelectContent>
+              {robots?.robots?.map((r: any) => (
+                <SelectItem key={r.robotId} value={r.robotId}>
+                  {r.name || r.robotId}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div className="flex items-center gap-1.5">
+          <span className="text-xs text-muted-foreground font-medium hidden sm:inline">Map</span>
+          <Select
+            value={selectedMapId || ""}
+            onValueChange={setSelectedMapId}
+          >
+            <SelectTrigger className="w-[130px] sm:w-[160px] h-8 text-xs bg-secondary/50">
+              <SelectValue placeholder="Select map" />
+            </SelectTrigger>
+            <SelectContent>
+              {maps?.maps?.map((m: any) => (
+                <SelectItem key={m.mapId} value={m.mapId}>
+                  {m.name || m.mapId}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        <Button
+          variant="destructive"
+          size="sm"
+          className="h-8 sm:h-9 sm:px-4 gap-1.5"
+          onClick={onStop}
         >
-          <MenuItem value="">
-            <em>Select robot</em>
-          </MenuItem>
-          {robots?.robots?.map((r: any) => (
-            <MenuItem key={r.robotId} value={r.robotId}>
-              {r.name || r.robotId}
-            </MenuItem>
-          ))}
-        </Select>
-      </Stack>
-      <Stack direction="row" alignItems="center" gap={1}>
-        <Typography variant="body2">Map:</Typography>
-        <Select
-          size="small"
-          value={selectedMapId || ""}
-          onChange={(e) => setSelectedMapId(e.target.value)}
-          displayEmpty
-        >
-          <MenuItem value="">
-            <em>Select map</em>
-          </MenuItem>
-          {maps?.maps?.map((m: any) => (
-            <MenuItem key={m.mapId} value={m.mapId}>
-              {m.name || m.mapId}
-            </MenuItem>
-          ))}
-        </Select>
-      </Stack>
-      <Tooltip
-        title={`last seen ${secondsAgo ?? "—"}s ago`}
-        placement="bottom"
-        disableInteractive
-      >
-        <Chip
-          label={`Status: ${robotStatus}`}
-          color={isFresh ? "success" : "default"}
-          size="small"
-        />
-      </Tooltip>
-      {robot && (
-        <>
-          <Chip label={`State: ${robot.state ?? "—"}`} size="small" />
-          <Chip label={`Battery: ${robot.batteryPct ?? "—"}%`} size="small" />
-          {Array.isArray(robot.position25832) &&
-            robot.position25832.length >= 2 && (
-              <Chip
-                label={`Pos: ${robot.position25832[0].toFixed(
-                  2
-                )}, ${robot.position25832[1].toFixed(2)}`}
-                size="small"
+          <OctagonX className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+          <span className="hidden sm:inline text-sm">Stop / Abort</span>
+          <span className="sm:hidden">Stop</span>
+        </Button>
+      </div>
+
+      {/* Row 2: Status badges */}
+      <div className="flex items-center gap-1.5 flex-wrap">
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Badge
+              className={cn(
+                "text-[10px] font-mono",
+                isFresh
+                  ? "bg-success/20 text-success border-success/30 animate-pulse-glow"
+                  : "bg-muted text-muted-foreground border-border"
+              )}
+              variant="outline"
+            >
+              <span
+                className={cn(
+                  "inline-block w-1.5 h-1.5 rounded-full mr-1",
+                  isFresh ? "bg-success" : "bg-muted-foreground"
+                )}
               />
+              {robotStatus}
+            </Badge>
+          </TooltipTrigger>
+          <TooltipContent>
+            last seen {secondsAgo ?? "\u2014"}s ago
+          </TooltipContent>
+        </Tooltip>
+
+        {robot && (
+          <>
+            <Badge variant="outline" className="text-[10px] font-mono">
+              {robot.state ?? "\u2014"}
+            </Badge>
+            <Badge variant="outline" className="text-[10px] font-mono">
+              Bat: {robot.batteryPct ?? "\u2014"}%
+            </Badge>
+            {Array.isArray(robot.position25832) &&
+              robot.position25832.length >= 2 && (
+                <Badge
+                  variant="outline"
+                  className="text-[10px] font-mono text-cyan hidden sm:inline-flex"
+                >
+                  {robot.position25832[0].toFixed(2)},{" "}
+                  {robot.position25832[1].toFixed(2)}
+                </Badge>
+              )}
+          </>
+        )}
+
+        <Badge
+          variant="outline"
+          className={cn(
+            "text-[10px] font-mono",
+            wsConnected
+              ? "bg-success/20 text-success border-success/30"
+              : "bg-muted text-muted-foreground border-border"
+          )}
+        >
+          <span
+            className={cn(
+              "inline-block w-1.5 h-1.5 rounded-full mr-1",
+              wsConnected ? "bg-success" : "bg-muted-foreground"
             )}
-        </>
-      )}
-      <Chip
-        label={wsConnected ? "Connected" : "Disconnected"}
-        color={wsConnected ? "success" : "default"}
-        size="small"
-      />
-      <Chip label={`Mission: ${currentMissionId || "—"}`} size="small" />
-    </Box>
+          />
+          {wsConnected ? "WS" : "Disc"}
+        </Badge>
+
+        <Badge
+          variant="outline"
+          className="text-[10px] font-mono text-cyan border-cyan/30 hidden sm:inline-flex"
+        >
+          Mission: {currentMissionId || "\u2014"}
+        </Badge>
+      </div>
+    </div>
   );
 }

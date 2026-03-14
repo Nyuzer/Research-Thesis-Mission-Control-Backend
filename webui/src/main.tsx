@@ -1,21 +1,41 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
-import { SnackbarProvider } from "notistack";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { Toaster } from "sonner";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import App from "./App";
 import { startWS } from "./utils/ws";
+import "./index.css";
 
 const queryClient = new QueryClient();
+
+// Apply stored theme before first render to avoid flash
+const stored = localStorage.getItem("theme");
+if (stored === "light") {
+  document.documentElement.classList.remove("dark");
+} else {
+  document.documentElement.classList.add("dark");
+}
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <QueryClientProvider client={queryClient}>
-      <SnackbarProvider maxSnack={3} autoHideDuration={4000}>
+      <TooltipProvider>
         <BrowserRouter>
           <App />
         </BrowserRouter>
-      </SnackbarProvider>
+        <Toaster
+          position="bottom-left"
+          toastOptions={{
+            style: {
+              background: "var(--card)",
+              border: "1px solid var(--border)",
+              color: "var(--foreground)",
+            },
+          }}
+        />
+      </TooltipProvider>
     </QueryClientProvider>
   </React.StrictMode>
 );
