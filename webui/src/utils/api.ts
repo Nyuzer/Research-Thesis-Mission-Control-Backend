@@ -135,6 +135,32 @@ export async function deleteMap(mapId: string) {
   });
 }
 
+// Advanced Missions API
+export async function sendAdvancedMission(data: {
+  robotId: string;
+  mapId: string;
+  name?: string;
+  steps: any[];
+  saveAsTemplate?: boolean;
+  templateName?: string;
+}) {
+  return fetchJSON(`/api/missions/advanced`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function fetchMissionTemplates() {
+  return fetchJSON<any[]>(`/api/mission-templates`);
+}
+
+export async function deleteMissionTemplate(templateId: string) {
+  return fetchJSON(`/api/mission-templates/${encodeURIComponent(templateId)}`, {
+    method: "DELETE",
+  });
+}
+
 // Zones API
 export async function fetchZones(mapId: string) {
   return fetchJSON<any[]>(`/api/maps/${encodeURIComponent(mapId)}/zones`);

@@ -475,6 +475,31 @@ class FiwareMqttBridge:
                     'receivedTime': datetime.utcnow().isoformat()
                 }
                 self.handle_move_to_command(waypoints, map_id)
+            elif command_type == "ADVANCED":
+                # Multi-step mission
+                steps = command_info.get('steps', [])
+                rospy.loginfo(f"Advanced mission with {len(steps)} steps")
+                self.current_mission = {
+                    'missionId': mission_id,
+                    'command': command_type,
+                    'commandTime': command_time,
+                    'mapId': map_id,
+                    'steps': steps,
+                    'currentStep': 0,
+                    'receivedTime': datetime.utcnow().isoformat()
+                }
+                if steps:
+                    first = steps[0]
+                    if first.get('action') == 'MOVE_TO' and first.get('waypoint'):
+                        self.handle_move_to_command(first['waypoint'], map_id)
+                    elif first.get('action') == 'WAIT':
+                        dur = first.get('duration', 30)
+                        rospy.loginfo(f"Step 0: WAIT {dur}s")
+                        rospy.sleep(dur)
+                        self.advance_multi_step()
+                    elif first.get('action') == 'PARK':
+                        rospy.loginfo("Step 0: PARK (idle)")
+                        self.transition_state(RobotState.IDLE, "Parked")
             elif command_type == "STOP":
                 # For STOP commands, don't create a new mission - work with existing one
                 rospy.loginfo(f"Processing STOP command - keeping existing mission: {self.current_mission.get('missionId') if self.current_mission else 'None'}")
@@ -719,6 +744,31 @@ class FiwareMqttBridge:
             rospy.logerr(f"Error handling MOVE_TO command: {e}")
             self.transition_state(RobotState.ERROR, f"Navigation error: {e}")
     
+    def advance_multi_step(self):
+        """Advance to the next step in a multi-step mission."""
+        if not self.current_mission or self.current_mission.get('command') != 'ADVANCED':
+            return
+        steps = self.current_mission.get('steps', [])
+        idx = self.current_mission.get('currentStep', 0) + 1
+        self.current_mission['currentStep'] = idx
+        if idx >= len(steps):
+            rospy.loginfo("All steps completed")
+            self.transition_state(RobotState.MISSION_COMPLETED, "All steps done")
+            return
+        step = steps[idx]
+        action = step.get('action', '')
+        rospy.loginfo(f"Step {idx}: {action}")
+        if action == 'MOVE_TO' and step.get('waypoint'):
+            self.handle_move_to_command(step['waypoint'], self.current_mission.get('mapId', ''))
+        elif action == 'WAIT':
+            dur = step.get('duration', 30)
+            rospy.loginfo(f"WAIT {dur}s")
+            rospy.sleep(dur)
+            self.advance_multi_step()
+        elif action == 'PARK':
+            rospy.loginfo("PARK (idle)")
+            self.transition_state(RobotState.IDLE, "Parked")
+
     def handle_stop_command(self):
         """Handle STOP command - cancel current navigation"""
         try:

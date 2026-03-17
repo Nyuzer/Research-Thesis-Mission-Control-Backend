@@ -3493,6 +3493,179 @@ async def update_mission_status(mission_id: str, status_update: MissionStatusUpd
         logger.error(f"Unexpected error updating mission status: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Unexpected error updating mission status: {str(e)}")
 
+# ── Advanced Missions (Multi-Waypoint) ──
+
+class MissionStep(BaseModel):
+    stepId: str = ""
+    action: str  # "MOVE_TO", "WAIT", "PARK"
+    waypoint: Optional[Point] = None
+    duration: Optional[int] = None  # seconds, for WAIT
+    zoneId: Optional[str] = None  # for PARK
+    order: int = 0
+
+class AdvancedMissionRequest(BaseModel):
+    robotId: str
+    mapId: str
+    name: Optional[str] = None
+    steps: List[MissionStep]
+    saveAsTemplate: bool = False
+    templateName: Optional[str] = None
+
+class MissionTemplate(BaseModel):
+    templateId: str
+    name: str
+    mapId: str
+    steps: list
+    createdAt: str
+    createdBy: Optional[str] = None
+
+from pymongo import MongoClient as _MC
+_templates_client = _MC("localhost", 27017)
+_templates_db = _templates_client["mission_control"]
+_templates_col = _templates_db["mission_templates"]
+
+
+@app.post("/api/missions/advanced")
+async def create_advanced_mission(
+    request: AdvancedMissionRequest,
+    user: UserResponse = Depends(require_role(UserRole.admin, UserRole.operator)),
+):
+    """Create a multi-step mission with multiple waypoints."""
+    if not request.steps:
+        raise HTTPException(status_code=400, detail="At least one step is required")
+
+    yaml_path = f"maps/{request.mapId}/map.yaml"
+    if not os.path.exists(yaml_path):
+        raise HTTPException(status_code=404, detail="Map not found")
+
+    mission_id = f"adv_{uuid.uuid4().hex[:8]}"
+    now = datetime.utcnow().isoformat()
+
+    # Assign step IDs and order
+    steps_data = []
+    for i, step in enumerate(request.steps):
+        steps_data.append({
+            "stepId": step.stepId or f"step_{i}",
+            "action": step.action,
+            "waypoint": step.waypoint.model_dump() if step.waypoint else None,
+            "duration": step.duration,
+            "zoneId": step.zoneId,
+            "order": i,
+        })
+
+    # Send first step to robot immediately
+    first_step = request.steps[0]
+    if first_step.action == "MOVE_TO" and first_step.waypoint:
+        command_message = CommandMessage(
+            command="MOVE_TO",
+            commandTime=now + "Z",
+            waypoints=first_step.waypoint,
+            mapId=request.mapId,
+            missionId=mission_id,
+        )
+        try:
+            fiware_response = await send_fiware_command(request.robotId, command_message)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to send first step: {e}")
+    else:
+        fiware_response = None
+
+    # Store multi-step mission as entity in Orion
+    entity = {
+        "id": f"urn:ngsi-ld:Mission:{mission_id}",
+        "type": "Mission",
+        "robotId": {"type": "Relationship", "value": f"urn:ngsi-ld:Robot:{request.robotId}"},
+        "command": {"type": "StructuredValue", "value": {
+            "command": "ADVANCED",
+            "steps": steps_data,
+            "mapId": request.mapId,
+            "missionId": mission_id,
+            "name": request.name or mission_id,
+        }},
+        "status": {"type": "Text", "value": "sent"},
+        "sentTime": {"type": "Text", "value": now},
+        "completedTime": {"type": "Text", "value": ""},
+        "executedTime": {"type": "Text", "value": ""},
+        "developmentMode": {"type": "Boolean", "value": False},
+        "currentStep": {"type": "Number", "value": 0},
+        "totalSteps": {"type": "Number", "value": len(steps_data)},
+    }
+
+    async with httpx.AsyncClient() as client:
+        headers = {
+            "Content-Type": "application/json",
+            "fiware-service": FIWARE_SERVICE,
+            "fiware-servicepath": FIWARE_SERVICE_PATH,
+        }
+        res = await client.post(FIWARE_ORION_URL, json=entity, headers=headers, timeout=10.0)
+        if res.status_code not in (201, 204):
+            logger.error(f"Failed to create advanced mission entity: {res.text}")
+
+    # Save as template if requested
+    if request.saveAsTemplate and request.templateName:
+        _templates_col.insert_one({
+            "_id": str(uuid.uuid4()),
+            "name": request.templateName,
+            "mapId": request.mapId,
+            "steps": steps_data,
+            "createdAt": now,
+            "createdBy": user.username,
+        })
+
+    return {
+        "missionId": mission_id,
+        "status": "sent",
+        "totalSteps": len(steps_data),
+        "message": "Advanced mission created",
+        "fiwareResponse": fiware_response,
+    }
+
+
+@app.get("/api/mission-templates")
+async def list_mission_templates(_user: UserResponse = Depends(get_current_user)):
+    docs = list(_templates_col.find())
+    return [
+        {
+            "templateId": str(d["_id"]),
+            "name": d["name"],
+            "mapId": d["mapId"],
+            "steps": d["steps"],
+            "createdAt": d.get("createdAt", ""),
+            "createdBy": d.get("createdBy"),
+        }
+        for d in docs
+    ]
+
+
+@app.post("/api/mission-templates")
+async def save_mission_template(
+    data: dict = Body(...),
+    user: UserResponse = Depends(require_role(UserRole.admin, UserRole.operator)),
+):
+    template_id = str(uuid.uuid4())
+    now = datetime.utcnow().isoformat()
+    _templates_col.insert_one({
+        "_id": template_id,
+        "name": data.get("name", "Unnamed"),
+        "mapId": data.get("mapId", ""),
+        "steps": data.get("steps", []),
+        "createdAt": now,
+        "createdBy": user.username,
+    })
+    return {"templateId": template_id, "message": "Template saved"}
+
+
+@app.delete("/api/mission-templates/{template_id}")
+async def delete_mission_template(
+    template_id: str,
+    _user: UserResponse = Depends(require_role(UserRole.admin, UserRole.operator)),
+):
+    result = _templates_col.delete_one({"_id": template_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Template not found")
+    return {"detail": "Template deleted"}
+
+
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000) 
+    uvicorn.run(app, host="0.0.0.0", port=8000)

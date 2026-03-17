@@ -1,13 +1,16 @@
 import { useState } from "react";
 import { useSelectionStore, Zone } from "../utils/state";
-import { sendMissionInstant, sendMissionScheduled, createZone, deleteZone, fetchZones } from "../utils/api";
+import {
+  sendMissionInstant, sendMissionScheduled, createZone, deleteZone, fetchZones,
+  sendAdvancedMission, fetchMissionTemplates, deleteMissionTemplate,
+} from "../utils/api";
 import { showToast } from "@/lib/toast";
 import { useAuthStore } from "@/utils/auth";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
-import { Send, Layers, Trash2, Eye, EyeOff } from "lucide-react";
+import { Send, Layers, Trash2, Eye, EyeOff, Plus, ChevronUp, ChevronDown, X, BookOpen } from "lucide-react";
 
 export default function RightPanel() {
   const robotId = useSelectionStore((s) => s.selectedRobotId);
@@ -64,6 +67,85 @@ export default function RightPanel() {
     } catch (e: any) {
       showToast(e?.message || "Failed to delete zone", "error");
     }
+  };
+
+  // Advanced mission state
+  interface Step { action: string; x?: number; y?: number; duration?: number; zoneId?: string }
+  const [advSteps, setAdvSteps] = useState<Step[]>([]);
+  const [advName, setAdvName] = useState("");
+  const [advSaveTemplate, setAdvSaveTemplate] = useState(false);
+  const [advTemplateName, setAdvTemplateName] = useState("");
+  const [templates, setTemplates] = useState<any[]>([]);
+
+  const addStep = (action: string) => {
+    if (action === "MOVE_TO" && destX != null && destY != null) {
+      setAdvSteps((s) => [...s, { action: "MOVE_TO", x: destX!, y: destY! }]);
+    } else if (action === "WAIT") {
+      setAdvSteps((s) => [...s, { action: "WAIT", duration: 30 }]);
+    } else if (action === "PARK") {
+      setAdvSteps((s) => [...s, { action: "PARK", zoneId: "" }]);
+    }
+  };
+
+  const removeStep = (i: number) => setAdvSteps((s) => s.filter((_, idx) => idx !== i));
+  const moveStep = (i: number, dir: -1 | 1) => {
+    setAdvSteps((s) => {
+      const arr = [...s];
+      const j = i + dir;
+      if (j < 0 || j >= arr.length) return arr;
+      [arr[i], arr[j]] = [arr[j], arr[i]];
+      return arr;
+    });
+  };
+
+  const onSendAdvanced = async () => {
+    if (!robotId || !mapId || advSteps.length === 0) {
+      showToast("Select robot, map, and add steps", "warning");
+      return;
+    }
+    try {
+      const steps = advSteps.map((s, i) => ({
+        stepId: `step_${i}`,
+        action: s.action,
+        waypoint: s.x != null ? { type: "Point", coordinates: [s.x, s.y, 0] } : undefined,
+        duration: s.duration,
+        zoneId: s.zoneId || undefined,
+        order: i,
+      }));
+      await sendAdvancedMission({
+        robotId: robotId!,
+        mapId: mapId!,
+        name: advName || undefined,
+        steps,
+        saveAsTemplate: advSaveTemplate,
+        templateName: advTemplateName || undefined,
+      });
+      showToast("Advanced mission sent", "success");
+      setAdvSteps([]);
+      setAdvName("");
+    } catch (e: any) {
+      showToast(e?.message || "Failed to send mission", "error");
+    }
+  };
+
+  const loadTemplates = async () => {
+    try {
+      const t = await fetchMissionTemplates();
+      setTemplates(t || []);
+    } catch {}
+  };
+
+  const loadTemplate = (t: any) => {
+    setAdvName(t.name);
+    setAdvSteps(
+      (t.steps || []).map((s: any) => ({
+        action: s.action,
+        x: s.waypoint?.coordinates?.[0],
+        y: s.waypoint?.coordinates?.[1],
+        duration: s.duration,
+        zoneId: s.zoneId,
+      }))
+    );
   };
 
   const ready = Boolean(robotId && mapId && destX != null && destY != null);
@@ -150,6 +232,9 @@ export default function RightPanel() {
           </TabsTrigger>
           <TabsTrigger value="zones" className="flex-1 text-xs">
             Zones
+          </TabsTrigger>
+          <TabsTrigger value="advanced" className="flex-1 text-xs">
+            Advanced
           </TabsTrigger>
         </TabsList>
 
@@ -294,6 +379,105 @@ export default function RightPanel() {
               </Button>
             </div>
           )}
+        </TabsContent>
+
+        <TabsContent value="advanced" className="mt-3 space-y-3">
+          <Input
+            placeholder="Mission name"
+            value={advName}
+            onChange={(e) => setAdvName(e.target.value)}
+            className="h-8 text-sm"
+          />
+
+          {/* Steps list */}
+          <div className="space-y-1.5 max-h-48 overflow-y-auto">
+            {advSteps.map((step, i) => (
+              <div key={i} className="flex items-center gap-1 bg-secondary/30 rounded-md px-2 py-1.5 text-xs">
+                <span className="text-muted-foreground w-4">{i + 1}.</span>
+                <span className="text-foreground font-medium flex-1">
+                  {step.action === "MOVE_TO" && `MOVE (${step.x?.toFixed(0)}, ${step.y?.toFixed(0)})`}
+                  {step.action === "WAIT" && (
+                    <>
+                      WAIT{" "}
+                      <input
+                        type="number"
+                        value={step.duration || 30}
+                        onChange={(e) => {
+                          const val = parseInt(e.target.value) || 0;
+                          setAdvSteps((s) => s.map((st, idx) => idx === i ? { ...st, duration: val } : st));
+                        }}
+                        className="w-12 bg-background border border-border rounded px-1 text-xs inline"
+                      />
+                      s
+                    </>
+                  )}
+                  {step.action === "PARK" && "PARK"}
+                </span>
+                <Button variant="ghost" size="icon" className="h-5 w-5" onClick={() => moveStep(i, -1)}><ChevronUp className="h-3 w-3" /></Button>
+                <Button variant="ghost" size="icon" className="h-5 w-5" onClick={() => moveStep(i, 1)}><ChevronDown className="h-3 w-3" /></Button>
+                <Button variant="ghost" size="icon" className="h-5 w-5 text-red-400" onClick={() => removeStep(i)}><X className="h-3 w-3" /></Button>
+              </div>
+            ))}
+          </div>
+
+          {/* Add step buttons */}
+          <div className="flex gap-1">
+            <Button size="sm" variant="outline" className="flex-1 text-xs h-7" onClick={() => addStep("MOVE_TO")} disabled={destX == null}>
+              <Plus className="h-3 w-3 mr-1" /> Move
+            </Button>
+            <Button size="sm" variant="outline" className="flex-1 text-xs h-7" onClick={() => addStep("WAIT")}>
+              <Plus className="h-3 w-3 mr-1" /> Wait
+            </Button>
+            <Button size="sm" variant="outline" className="flex-1 text-xs h-7" onClick={() => addStep("PARK")}>
+              <Plus className="h-3 w-3 mr-1" /> Park
+            </Button>
+          </div>
+
+          {/* Templates */}
+          <div className="flex gap-1">
+            <Button size="sm" variant="ghost" className="text-xs h-7" onClick={loadTemplates}>
+              <BookOpen className="h-3 w-3 mr-1" /> Load Template
+            </Button>
+          </div>
+          {templates.length > 0 && (
+            <div className="space-y-1 max-h-24 overflow-y-auto">
+              {templates.map((t) => (
+                <button
+                  key={t.templateId}
+                  className="w-full text-left text-xs px-2 py-1 bg-secondary/30 rounded hover:bg-secondary/50 text-foreground"
+                  onClick={() => loadTemplate(t)}
+                >
+                  {t.name} ({t.steps?.length || 0} steps)
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Save as template */}
+          <label className="flex items-center gap-2 text-xs text-muted-foreground">
+            <input
+              type="checkbox"
+              checked={advSaveTemplate}
+              onChange={(e) => setAdvSaveTemplate(e.target.checked)}
+            />
+            Save as Template
+          </label>
+          {advSaveTemplate && (
+            <Input
+              placeholder="Template name"
+              value={advTemplateName}
+              onChange={(e) => setAdvTemplateName(e.target.value)}
+              className="h-8 text-sm"
+            />
+          )}
+
+          <Button
+            className="w-full gap-2"
+            disabled={!robotId || !mapId || advSteps.length === 0}
+            onClick={onSendAdvanced}
+          >
+            <Send className="h-4 w-4" /> Send Advanced Mission
+          </Button>
         </TabsContent>
       </Tabs>
     </div>

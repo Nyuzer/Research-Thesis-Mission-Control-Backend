@@ -30,11 +30,11 @@
 
 ## Phase 4: Advanced Mission Scenarios
 
-- [ ] 4A.1 — Backend multi-waypoint mission models and endpoints
-- [ ] 4A.2 — Backend mission templates CRUD
-- [ ] 4B.1 — Frontend mission scenario builder UI in RightPanel
-- [ ] 4B.2 — Multi-point click mode with numbered waypoints on MapView
-- [ ] 4C.1 — ROS bridge multi-step command parsing and execution
+- [x] 4A.1 — Backend multi-waypoint mission models and endpoints
+- [x] 4A.2 — Backend mission templates CRUD
+- [x] 4B.1 — Frontend mission scenario builder UI in RightPanel
+- [x] 4B.2 — Multi-point click mode with numbered waypoints on MapView
+- [x] 4C.1 — ROS bridge multi-step command parsing and execution
 
 ## Phase 5: Map Generation Page
 
