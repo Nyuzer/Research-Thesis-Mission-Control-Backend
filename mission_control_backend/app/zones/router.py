@@ -88,9 +88,9 @@ async def create_zone(
         "mapId": {"type": "Text", "value": map_id},
         "name": {"type": "Text", "value": data.name},
         "zoneType": {"type": "Text", "value": data.zoneType},
-        "polygon": {"type": "StructuredValue", "value": data.polygon},
+        "polygon": {"type": "Text", "value": json.dumps(data.polygon)},
         "speedLimit": {"type": "Number", "value": data.speedLimit or 0},
-        "color": {"type": "Text", "value": data.color or ("rgba(59,130,246,0.3)" if data.zoneType == "parking" else "rgba(245,158,11,0.3)")},
+        "color": {"type": "Text", "value": data.color or ("#3b82f640" if data.zoneType == "parking" else "#f59e0b40")},
         "createdBy": {"type": "Text", "value": user.username},
         "createdAt": {"type": "Text", "value": now},
     }
@@ -123,7 +123,7 @@ async def update_zone(
     if data.polygon is not None:
         if len(data.polygon) < 3:
             raise HTTPException(status_code=400, detail="Polygon must have at least 3 vertices")
-        attrs["polygon"] = {"type": "StructuredValue", "value": data.polygon}
+        attrs["polygon"] = {"type": "Text", "value": json.dumps(data.polygon)}
     if data.speedLimit is not None:
         attrs["speedLimit"] = {"type": "Number", "value": data.speedLimit}
     if data.color is not None:

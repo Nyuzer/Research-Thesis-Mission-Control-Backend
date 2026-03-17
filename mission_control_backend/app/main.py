@@ -1,3 +1,9 @@
+import sys, os as _os
+# Ensure 'app' package is importable regardless of how main.py is invoked
+_project_root = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
+
 from fastapi import FastAPI, HTTPException, File, UploadFile, Body, WebSocket, WebSocketDisconnect, Depends
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware

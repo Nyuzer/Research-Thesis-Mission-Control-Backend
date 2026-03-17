@@ -123,7 +123,7 @@ function ZonePolygon({
   const points = polygon.map(([x, y]) => toPixel(x, y));
   if (points.some((p) => !isFinite(p.cx) || !isFinite(p.cy))) return null;
   const pathD = points.map((p, i) => `${i === 0 ? "M" : "L"} ${p.cx} ${p.cy}`).join(" ") + " Z";
-  const fill = color || (zoneType === "parking" ? "rgba(59,130,246,0.25)" : "rgba(245,158,11,0.25)");
+  const fill = color || (zoneType === "parking" ? "#3b82f640" : "#f59e0b40");
   const stroke = zoneType === "parking" ? "#3b82f6" : "#f59e0b";
   // Centroid for label
   const cx = points.reduce((s, p) => s + p.cx, 0) / points.length;

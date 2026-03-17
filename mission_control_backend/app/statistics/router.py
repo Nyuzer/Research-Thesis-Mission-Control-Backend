@@ -33,7 +33,7 @@ async def missions_summary(_user: UserResponse = Depends(get_current_user)):
 
 @router.get("/missions/over-time")
 async def missions_over_time(
-    period: str = Query("day", regex="^(day|week|month|year)$"),
+    period: str = Query("day", pattern="^(day|week|month|year)$"),
     _user: UserResponse = Depends(get_current_user),
 ):
     regular, _ = await _get_all_missions()
