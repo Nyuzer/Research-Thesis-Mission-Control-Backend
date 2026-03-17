@@ -8,13 +8,14 @@ Registers service group and device for Professor_Robot_01 with correct API key
 import requests
 import json
 import time
+import os
 
-# FIWARE Configuration
-FIWARE_IOT_AGENT_URL = "http://localhost:4041"
-FIWARE_SERVICE = "smartrobotics"
-FIWARE_SERVICE_PATH = "/"
-API_KEY = "8jggokgpepnvsb2uv4s40d59vk"
-ROBOT_ID = "Professor_Robot_01"
+# FIWARE Configuration (from environment variables)
+FIWARE_IOT_AGENT_URL = os.getenv("FIWARE_IOT_AGENT_URL", "http://localhost:4041")
+FIWARE_SERVICE = os.getenv("FIWARE_SERVICE", "smartrobotics")
+FIWARE_SERVICE_PATH = os.getenv("FIWARE_SERVICE_PATH", "/")
+API_KEY = os.getenv("FIWARE_API_KEY", "8jggokgpepnvsb2uv4s40d59vk")
+ROBOT_ID = os.getenv("ROBOT_ID", "Professor_Robot_01")
 
 def check_iot_agent():
     """Check if IoT Agent is accessible"""

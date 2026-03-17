@@ -11,7 +11,7 @@
 - [x] 1B.2 — Create LoginPage and ProtectedRoute components
 - [x] 1B.3 — Create UsersPage (admin user management)
 - [x] 1B.4 — Integrate auth into App.tsx, api.ts, ws.ts (headers, guards, nav)
-- [ ] 1C.1 — MQTT access key security (env vars, Mosquitto auth config, remove hardcoded keys)
+- [x] 1C.1 — MQTT access key security (env vars, Mosquitto auth config, remove hardcoded keys)
 
 ## Phase 2: Statistics Dashboard
 
