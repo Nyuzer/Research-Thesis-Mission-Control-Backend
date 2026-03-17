@@ -451,6 +451,18 @@ class FiwareMqttBridge:
             
             # Process the command
             if command_type == "MOVE_TO":
+                # Extract zone data if present (speed limits, parking zones)
+                zones = command_info.get('zones', [])
+                speed_limit = None
+                if zones:
+                    for zone in zones:
+                        if zone.get('zoneType') == 'speed_limit' and zone.get('speedLimit'):
+                            sl = zone['speedLimit']
+                            if speed_limit is None or sl < speed_limit:
+                                speed_limit = sl
+                    if speed_limit is not None:
+                        rospy.loginfo(f"Speed limit zone detected: {speed_limit} m/s")
+
                 # Store current mission - only if we're accepting it
                 self.current_mission = {
                     'missionId': mission_id,
@@ -458,6 +470,8 @@ class FiwareMqttBridge:
                     'commandTime': command_time,
                     'waypoints': waypoints,
                     'mapId': map_id,
+                    'zones': zones,
+                    'speedLimit': speed_limit,
                     'receivedTime': datetime.utcnow().isoformat()
                 }
                 self.handle_move_to_command(waypoints, map_id)

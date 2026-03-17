@@ -135,6 +135,28 @@ export async function deleteMap(mapId: string) {
   });
 }
 
+// Zones API
+export async function fetchZones(mapId: string) {
+  return fetchJSON<any[]>(`/api/maps/${encodeURIComponent(mapId)}/zones`);
+}
+
+export async function createZone(
+  mapId: string,
+  data: { name: string; zoneType: string; polygon: number[][]; speedLimit?: number; color?: string }
+) {
+  return fetchJSON(`/api/maps/${encodeURIComponent(mapId)}/zones`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteZone(mapId: string, zoneId: string) {
+  return fetchJSON(`/api/maps/${encodeURIComponent(mapId)}/zones/${encodeURIComponent(zoneId)}`, {
+    method: "DELETE",
+  });
+}
+
 // Users API (admin only)
 export async function fetchUsers() {
   return fetchJSON<any[]>(`/api/auth/users`);

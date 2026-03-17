@@ -6,7 +6,7 @@ import proj4 from "proj4";
 
 import { useSelectionStore } from "../utils/state";
 import yaml from "js-yaml";
-import { fetchMapFiles } from "../utils/api";
+import { fetchMapFiles, fetchZones } from "../utils/api";
 import { showToast } from "@/lib/toast";
 
 // EPSG:25832 proj string
@@ -104,6 +104,42 @@ function DestinationMarker({ cx, cy }: { cx: number; cy: number }) {
   );
 }
 
+/* ── Zone polygon overlay ── */
+function ZonePolygon({
+  polygon,
+  zoneType,
+  name,
+  speedLimit,
+  color,
+  toPixel,
+}: {
+  polygon: number[][];
+  zoneType: string;
+  name: string;
+  speedLimit?: number | null;
+  color?: string | null;
+  toPixel: (wx: number, wy: number) => { cx: number; cy: number };
+}) {
+  const points = polygon.map(([x, y]) => toPixel(x, y));
+  if (points.some((p) => !isFinite(p.cx) || !isFinite(p.cy))) return null;
+  const pathD = points.map((p, i) => `${i === 0 ? "M" : "L"} ${p.cx} ${p.cy}`).join(" ") + " Z";
+  const fill = color || (zoneType === "parking" ? "rgba(59,130,246,0.25)" : "rgba(245,158,11,0.25)");
+  const stroke = zoneType === "parking" ? "#3b82f6" : "#f59e0b";
+  // Centroid for label
+  const cx = points.reduce((s, p) => s + p.cx, 0) / points.length;
+  const cy = points.reduce((s, p) => s + p.cy, 0) / points.length;
+  const label = zoneType === "parking" ? `P: ${name}` : `${speedLimit ?? "?"} m/s`;
+
+  return (
+    <g>
+      <path d={pathD} fill={fill} stroke={stroke} strokeWidth="2" strokeDasharray={zoneType === "speed_limit" ? "6 3" : "none"} />
+      <text x={cx} y={cy} textAnchor="middle" dominantBaseline="central" fill={stroke} fontSize="10" fontWeight="700" paintOrder="stroke" stroke="#0f172a" strokeWidth="2.5" strokeLinejoin="round" fontFamily="Inter, sans-serif">
+        {label}
+      </text>
+    </g>
+  );
+}
+
 /* ── Dashed line between robot and destination ── */
 function ConnectionLine({ x1, y1, x2, y2 }: { x1: number; y1: number; x2: number; y2: number }) {
   return (
@@ -132,6 +168,8 @@ export default function MapView() {
   const robots = useSelectionStore((s) => s.robots);
   const dest = useSelectionStore((s) => ({ x: s.destX, y: s.destY }));
   const selectedRobotId = useSelectionStore((s) => s.selectedRobotId);
+  const zones = useSelectionStore((s) => s.zones);
+  const showZones = useSelectionStore((s) => s.showZones);
 
   // Initialize Leaflet map once
   useEffect(() => {
@@ -252,6 +290,13 @@ export default function MapView() {
           mapRef.current.fitBounds(bounds as any, { padding: [20, 20] as any });
         };
         img.src = absUrl;
+        // Load zones for this map
+        try {
+          const z = await fetchZones(selectedMapId);
+          useSelectionStore.getState().setZones(z || []);
+        } catch {
+          useSelectionStore.getState().setZones([]);
+        }
       } catch (e) {
         console.warn("Failed to load map files", e);
       }
@@ -409,6 +454,18 @@ export default function MapView() {
                 }}
               >
                 <svg width="100%" height="100%" style={{ display: "block", overflow: "visible" }}>
+                  {/* Zone polygons */}
+                  {showZones && zones.map((z: any) => (
+                    <ZonePolygon
+                      key={z.zoneId}
+                      polygon={z.polygon}
+                      zoneType={z.zoneType}
+                      name={z.name}
+                      speedLimit={z.speedLimit}
+                      color={z.color}
+                      toPixel={toPixel}
+                    />
+                  ))}
                   {/* Connection line from selected robot to destination */}
                   {selectedRobotPixel && destPixel && (
                     <ConnectionLine

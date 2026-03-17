@@ -1,5 +1,17 @@
 import { create } from "zustand";
 
+export interface Zone {
+  zoneId: string;
+  mapId: string;
+  name: string;
+  zoneType: "parking" | "speed_limit";
+  polygon: number[][];
+  speedLimit?: number | null;
+  color?: string | null;
+  createdBy?: string | null;
+  createdAt: string;
+}
+
 type SelectionState = {
   selectedRobotId: string | null;
   selectedMapId: string | null;
@@ -23,6 +35,10 @@ type SelectionState = {
     unknownValue?: number;
     valueTolerance?: number;
   } | null;
+  zones: Zone[];
+  showZones: boolean;
+  setZones: (zones: Zone[]) => void;
+  setShowZones: (v: boolean) => void;
   setSelectedRobotId: (id: string) => void;
   setSelectedMapId: (id: string) => void;
   setWsConnected: (v: boolean) => void;
@@ -41,11 +57,15 @@ export const useSelectionStore = create<SelectionState>((set) => ({
   destX: null,
   destY: null,
   mapMeta: null,
+  zones: [],
+  showZones: true,
   setSelectedRobotId: (id) => set({ selectedRobotId: id }),
   setSelectedMapId: (id) => set({ selectedMapId: id }),
   setWsConnected: (v) => set({ wsConnected: v }),
   setCurrentMissionId: (id) => set({ currentMissionId: id }),
   setRobots: (robots) => set({ robots }),
+  setZones: (zones) => set({ zones }),
+  setShowZones: (v) => set({ showZones: v }),
   setDest: (x, y) => set({ destX: x, destY: y }),
   setMapMeta: (m) => set({ mapMeta: m }),
 }));

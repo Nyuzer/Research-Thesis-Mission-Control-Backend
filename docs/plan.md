@@ -22,11 +22,11 @@
 
 ## Phase 3: Parking Zones & Speed-Limit Zones
 
-- [ ] 3A.1 — Create backend zones module (`zones/__init__.py`, `router.py`, `models.py`)
-- [ ] 3A.2 — Mount zones router in main.py, protect with auth
-- [ ] 3B.1 — Add zone overlay rendering and drawing tools to MapView.tsx
-- [ ] 3B.2 — Add zone management panel/tab in RightPanel.tsx + state + API
-- [ ] 3C.1 — Update ROS bridge to parse zone data from mission commands
+- [x] 3A.1 — Create backend zones module (`zones/__init__.py`, `router.py`, `models.py`)
+- [x] 3A.2 — Mount zones router in main.py, protect with auth
+- [x] 3B.1 — Add zone overlay rendering and drawing tools to MapView.tsx
+- [x] 3B.2 — Add zone management panel/tab in RightPanel.tsx + state + API
+- [x] 3C.1 — Update ROS bridge to parse zone data from mission commands
 
 ## Phase 4: Advanced Mission Scenarios
 
