@@ -1,4 +1,5 @@
 from __future__ import annotations
+from typing import Optional
 import httpx
 import logging
 import json
@@ -24,15 +25,27 @@ async def query_osm_features(south: float, west: float, north: float, east: floa
         f');out geom;'
     )
 
-    async with httpx.AsyncClient() as client:
-        resp = await client.post(
-            OVERPASS_URL,
-            data={"data": query},
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
-            timeout=60.0,
-        )
-        resp.raise_for_status()
-        data = resp.json()
+    logger.info(f"Overpass query for bbox {bbox}: {query[:100]}...")
+    try:
+        async with httpx.AsyncClient(verify=False) as client:
+            resp = await client.post(
+                OVERPASS_URL,
+                data={"data": query},
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+                timeout=60.0,
+            )
+            logger.info(f"Overpass response status: {resp.status_code}")
+            resp.raise_for_status()
+            data = resp.json()
+    except httpx.ConnectError as e:
+        logger.error(f"Cannot connect to Overpass API: {e}")
+        raise RuntimeError(f"Cannot connect to Overpass API: {e}")
+    except httpx.HTTPStatusError as e:
+        logger.error(f"Overpass API returned {e.response.status_code}: {e.response.text[:200]}")
+        raise RuntimeError(f"Overpass API error {e.response.status_code}")
+    except Exception as e:
+        logger.error(f"Overpass request failed: {type(e).__name__}: {e}")
+        raise
 
     features = []
     for element in data.get("elements", []):
@@ -56,7 +69,7 @@ async def query_osm_features(south: float, west: float, north: float, east: floa
     return {"type": "FeatureCollection", "features": features}
 
 
-def _element_to_geojson(el: dict) -> dict | None:
+def _element_to_geojson(el: dict) -> Optional[dict]:
     """Convert Overpass element to GeoJSON geometry."""
     if el.get("type") == "way" and "geometry" in el:
         coords = [[n["lon"], n["lat"]] for n in el["geometry"]]
