@@ -15,10 +15,10 @@
 
 ## Phase 2: Statistics Dashboard
 
-- [ ] 2A.1 — Create backend statistics module (`statistics/__init__.py`, `router.py`, `aggregation.py`)
-- [ ] 2A.2 — Mount statistics router in main.py, protect with auth
-- [ ] 2B.1 — Create frontend StatisticsPage with charts (recharts)
-- [ ] 2B.2 — Add Statistics route and nav item to App.tsx
+- [x] 2A.1 — Create backend statistics module (`statistics/__init__.py`, `router.py`, `aggregation.py`)
+- [x] 2A.2 — Mount statistics router in main.py, protect with auth
+- [x] 2B.1 — Create frontend StatisticsPage with charts (recharts)
+- [x] 2B.2 — Add Statistics route and nav item to App.tsx
 
 ## Phase 3: Parking Zones & Speed-Limit Zones
 
