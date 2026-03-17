@@ -1,8 +1,36 @@
+import { getAuthHeaders, useAuthStore } from "./auth";
+
 export async function fetchJSON<T>(
   url: string,
   init?: RequestInit
 ): Promise<T> {
-  const res = await fetch(url, init);
+  const authHeaders = getAuthHeaders();
+  const headers = new Headers(init?.headers);
+  for (const [k, v] of Object.entries(authHeaders)) {
+    if (!headers.has(k)) headers.set(k, v);
+  }
+
+  const res = await fetch(url, { ...init, headers });
+
+  if (res.status === 401) {
+    const refreshed = await useAuthStore.getState().refresh();
+    if (refreshed) {
+      const retryHeaders = new Headers(init?.headers);
+      const newAuth = getAuthHeaders();
+      for (const [k, v] of Object.entries(newAuth)) {
+        retryHeaders.set(k, v);
+      }
+      const retry = await fetch(url, { ...init, headers: retryHeaders });
+      if (!retry.ok) {
+        const text = await retry.text();
+        throw new Error(text || retry.statusText);
+      }
+      return retry.json();
+    }
+    useAuthStore.getState().logout();
+    throw new Error("Session expired");
+  }
+
   if (!res.ok) {
     const text = await res.text();
     throw new Error(text || res.statusText);
@@ -103,6 +131,41 @@ export async function uploadMap(formData: FormData) {
 
 export async function deleteMap(mapId: string) {
   return fetchJSON(`/api/maps/${encodeURIComponent(mapId)}`, {
+    method: "DELETE",
+  });
+}
+
+// Users API (admin only)
+export async function fetchUsers() {
+  return fetchJSON<any[]>(`/api/auth/users`);
+}
+
+export async function createUser(data: {
+  email: string;
+  username: string;
+  password: string;
+  role: string;
+}) {
+  return fetchJSON(`/api/auth/users`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateUser(
+  userId: string,
+  data: { email?: string; username?: string; password?: string; role?: string; is_active?: boolean }
+) {
+  return fetchJSON(`/api/auth/users/${encodeURIComponent(userId)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteUser(userId: string) {
+  return fetchJSON(`/api/auth/users/${encodeURIComponent(userId)}`, {
     method: "DELETE",
   });
 }

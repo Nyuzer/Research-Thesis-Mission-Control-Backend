@@ -7,10 +7,10 @@
 - [x] 1A.3 — Implement auth config, dependencies, and router (`config.py`, `dependencies.py`, `router.py`)
 - [x] 1A.4 — Bootstrap default admin on startup (`bootstrap.py`) and mount auth router in `main.py`
 - [x] 1A.5 — Protect existing backend endpoints with auth dependencies
-- [ ] 1B.1 — Create frontend auth utilities (`auth.ts`) and Zustand auth store
-- [ ] 1B.2 — Create LoginPage and ProtectedRoute components
-- [ ] 1B.3 — Create UsersPage (admin user management)
-- [ ] 1B.4 — Integrate auth into App.tsx, api.ts, ws.ts (headers, guards, nav)
+- [x] 1B.1 — Create frontend auth utilities (`auth.ts`) and Zustand auth store
+- [x] 1B.2 — Create LoginPage and ProtectedRoute components
+- [x] 1B.3 — Create UsersPage (admin user management)
+- [x] 1B.4 — Integrate auth into App.tsx, api.ts, ws.ts (headers, guards, nav)
 - [ ] 1C.1 — MQTT access key security (env vars, Mosquitto auth config, remove hardcoded keys)
 
 ## Phase 2: Statistics Dashboard

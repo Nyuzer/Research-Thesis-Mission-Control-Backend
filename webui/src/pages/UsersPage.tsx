@@ -1,0 +1,273 @@
+import { useState } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { fetchUsers, createUser, updateUser, deleteUser } from "@/utils/api";
+import { Button } from "@/components/ui/button";
+import ConfirmDeleteDialog from "@/components/ConfirmDeleteDialog";
+import { showToast } from "@/lib/toast";
+import { Plus, Trash2, Pencil, X, Check, Shield, Eye, Wrench } from "lucide-react";
+
+const ROLE_ICONS: Record<string, typeof Shield> = {
+  admin: Shield,
+  operator: Wrench,
+  viewer: Eye,
+};
+
+const ROLE_COLORS: Record<string, string> = {
+  admin: "text-red-400 bg-red-500/10",
+  operator: "text-cyan bg-cyan/10",
+  viewer: "text-muted-foreground bg-muted",
+};
+
+export default function UsersPage() {
+  const queryClient = useQueryClient();
+  const { data: users = [], isLoading } = useQuery({
+    queryKey: ["users"],
+    queryFn: fetchUsers,
+  });
+
+  const [showCreate, setShowCreate] = useState(false);
+  const [editId, setEditId] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
+
+  // Create form
+  const [form, setForm] = useState({ email: "", username: "", password: "", role: "operator" });
+
+  const createMut = useMutation({
+    mutationFn: createUser,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["users"] });
+      setShowCreate(false);
+      setForm({ email: "", username: "", password: "", role: "operator" });
+      showToast("User created", "success");
+    },
+    onError: (e: any) => showToast(e.message, "error"),
+  });
+
+  const updateMut = useMutation({
+    mutationFn: ({ id, data }: { id: string; data: any }) => updateUser(id, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["users"] });
+      setEditId(null);
+      showToast("User updated", "success");
+    },
+    onError: (e: any) => showToast(e.message, "error"),
+  });
+
+  const deleteMut = useMutation({
+    mutationFn: deleteUser,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["users"] });
+      showToast("User deleted", "success");
+    },
+    onError: (e: any) => showToast(e.message, "error"),
+  });
+
+  // Edit form state
+  const [editForm, setEditForm] = useState<any>({});
+
+  const startEdit = (user: any) => {
+    setEditId(user.id);
+    setEditForm({ email: user.email, username: user.username, role: user.role, password: "" });
+  };
+
+  const saveEdit = () => {
+    const data: any = {};
+    if (editForm.email) data.email = editForm.email;
+    if (editForm.username) data.username = editForm.username;
+    if (editForm.role) data.role = editForm.role;
+    if (editForm.password) data.password = editForm.password;
+    updateMut.mutate({ id: editId!, data });
+  };
+
+  return (
+    <div className="p-4 sm:p-6 max-w-4xl mx-auto space-y-4">
+      <div className="flex items-center justify-between">
+        <h2 className="text-lg font-semibold text-foreground">User Management</h2>
+        <Button size="sm" onClick={() => setShowCreate(true)}>
+          <Plus className="h-4 w-4 mr-1" /> Add User
+        </Button>
+      </div>
+
+      {/* Create form */}
+      {showCreate && (
+        <div className="bg-card border border-border rounded-lg p-4 space-y-3">
+          <h3 className="text-sm font-medium">New User</h3>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <input
+              placeholder="Email"
+              value={form.email}
+              onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
+              className="px-3 py-2 rounded-lg border border-border bg-background text-sm text-foreground"
+            />
+            <input
+              placeholder="Username"
+              value={form.username}
+              onChange={(e) => setForm((f) => ({ ...f, username: e.target.value }))}
+              className="px-3 py-2 rounded-lg border border-border bg-background text-sm text-foreground"
+            />
+            <input
+              placeholder="Password"
+              type="password"
+              value={form.password}
+              onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}
+              className="px-3 py-2 rounded-lg border border-border bg-background text-sm text-foreground"
+            />
+            <select
+              value={form.role}
+              onChange={(e) => setForm((f) => ({ ...f, role: e.target.value }))}
+              className="px-3 py-2 rounded-lg border border-border bg-background text-sm text-foreground"
+            >
+              <option value="admin">Admin</option>
+              <option value="operator">Operator</option>
+              <option value="viewer">Viewer</option>
+            </select>
+          </div>
+          <div className="flex gap-2">
+            <Button
+              size="sm"
+              onClick={() => createMut.mutate(form)}
+              disabled={createMut.isPending}
+            >
+              Create
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => setShowCreate(false)}>
+              Cancel
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* Users table */}
+      {isLoading ? (
+        <div className="text-sm text-muted-foreground">Loading...</div>
+      ) : (
+        <div className="bg-card border border-border rounded-lg overflow-hidden">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-border text-muted-foreground text-left">
+                <th className="px-4 py-3 font-medium">User</th>
+                <th className="px-4 py-3 font-medium">Email</th>
+                <th className="px-4 py-3 font-medium">Role</th>
+                <th className="px-4 py-3 font-medium">Status</th>
+                <th className="px-4 py-3 font-medium text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {users.map((u: any) => {
+                const RoleIcon = ROLE_ICONS[u.role] || Eye;
+                const isEditing = editId === u.id;
+
+                return (
+                  <tr key={u.id} className="border-b border-border last:border-0">
+                    <td className="px-4 py-3">
+                      {isEditing ? (
+                        <input
+                          value={editForm.username}
+                          onChange={(e) =>
+                            setEditForm((f: any) => ({ ...f, username: e.target.value }))
+                          }
+                          className="px-2 py-1 rounded border border-border bg-background text-sm w-full text-foreground"
+                        />
+                      ) : (
+                        <span className="text-foreground font-medium">{u.username}</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      {isEditing ? (
+                        <input
+                          value={editForm.email}
+                          onChange={(e) =>
+                            setEditForm((f: any) => ({ ...f, email: e.target.value }))
+                          }
+                          className="px-2 py-1 rounded border border-border bg-background text-sm w-full text-foreground"
+                        />
+                      ) : (
+                        <span className="text-muted-foreground">{u.email}</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      {isEditing ? (
+                        <select
+                          value={editForm.role}
+                          onChange={(e) =>
+                            setEditForm((f: any) => ({ ...f, role: e.target.value }))
+                          }
+                          className="px-2 py-1 rounded border border-border bg-background text-sm text-foreground"
+                        >
+                          <option value="admin">Admin</option>
+                          <option value="operator">Operator</option>
+                          <option value="viewer">Viewer</option>
+                        </select>
+                      ) : (
+                        <span
+                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${ROLE_COLORS[u.role] || ""}`}
+                        >
+                          <RoleIcon className="h-3 w-3" />
+                          {u.role}
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      <span
+                        className={`text-xs ${u.is_active ? "text-green-400" : "text-red-400"}`}
+                      >
+                        {u.is_active ? "Active" : "Inactive"}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      {isEditing ? (
+                        <div className="flex items-center justify-end gap-1">
+                          <Button size="icon" variant="ghost" className="h-7 w-7" onClick={saveEdit}>
+                            <Check className="h-3.5 w-3.5" />
+                          </Button>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-7 w-7"
+                            onClick={() => setEditId(null)}
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
+                      ) : (
+                        <div className="flex items-center justify-end gap-1">
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-7 w-7"
+                            onClick={() => startEdit(u)}
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </Button>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-7 w-7 text-red-400 hover:text-red-300"
+                            onClick={() => setDeleteTarget({ id: u.id, name: u.username })}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <ConfirmDeleteDialog
+        open={!!deleteTarget}
+        title="Delete User"
+        description={`Are you sure you want to delete user "${deleteTarget?.name}"? This action cannot be undone.`}
+        onConfirm={() => {
+          if (deleteTarget) deleteMut.mutate(deleteTarget.id);
+          setDeleteTarget(null);
+        }}
+        onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}
+      />
+    </div>
+  );
+}

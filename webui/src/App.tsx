@@ -1,21 +1,41 @@
-import { Routes, Route, Link, useLocation } from "react-router-dom";
+import { Routes, Route, Link, useLocation, Navigate } from "react-router-dom";
 import DashboardPage from "./pages/DashboardPage";
 import MissionsPage from "./pages/MissionsPage";
 import MapsPage from "./pages/MapsPage";
+import LoginPage from "./pages/LoginPage";
+import UsersPage from "./pages/UsersPage";
+import ProtectedRoute from "./components/ProtectedRoute";
 import { cn } from "@/lib/utils";
 import { useTheme } from "@/lib/theme";
-import { LayoutDashboard, ListChecks, Map, Sun, Moon } from "lucide-react";
+import { useAuthStore } from "@/utils/auth";
+import { LayoutDashboard, ListChecks, Map, Sun, Moon, Users, LogOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
-
-const navItems = [
-  { to: "/", label: "Dashboard", icon: LayoutDashboard, match: (p: string) => p === "/" },
-  { to: "/missions", label: "Missions", icon: ListChecks, match: (p: string) => p === "/missions" },
-  { to: "/maps", label: "Maps", icon: Map, match: (p: string) => p === "/maps" },
-];
 
 export default function App() {
   const location = useLocation();
   const { theme, toggle } = useTheme();
+  const { isAuthenticated, user, logout } = useAuthStore();
+
+  if (!isAuthenticated && location.pathname !== "/login") {
+    return <Navigate to="/login" replace />;
+  }
+
+  if (location.pathname === "/login") {
+    return (
+      <Routes>
+        <Route path="/login" element={<LoginPage />} />
+      </Routes>
+    );
+  }
+
+  const navItems = [
+    { to: "/", label: "Dashboard", icon: LayoutDashboard, match: (p: string) => p === "/" },
+    { to: "/missions", label: "Missions", icon: ListChecks, match: (p: string) => p === "/missions" },
+    { to: "/maps", label: "Maps", icon: Map, match: (p: string) => p === "/maps" },
+    ...(user?.role === "admin"
+      ? [{ to: "/users", label: "Users", icon: Users, match: (p: string) => p === "/users" }]
+      : []),
+  ];
 
   return (
     <div className="flex flex-col h-full">
@@ -48,10 +68,13 @@ export default function App() {
               );
             })}
           </nav>
+          <span className="hidden sm:inline text-xs text-muted-foreground ml-2">
+            {user?.username}
+          </span>
           <Button
             variant="ghost"
             size="icon"
-            className="h-8 w-8 ml-1 sm:ml-2"
+            className="h-8 w-8 ml-1"
             onClick={toggle}
           >
             {theme === "dark" ? (
@@ -60,14 +83,25 @@ export default function App() {
               <Moon className="h-4 w-4" />
             )}
           </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8"
+            onClick={logout}
+            title="Logout"
+          >
+            <LogOut className="h-4 w-4" />
+          </Button>
         </div>
       </header>
       {/* Content */}
       <div className="flex-1 min-h-0 overflow-auto md:overflow-hidden">
         <Routes>
-          <Route path="/" element={<DashboardPage />} />
-          <Route path="/missions" element={<MissionsPage />} />
-          <Route path="/maps" element={<MapsPage />} />
+          <Route path="/" element={<ProtectedRoute><DashboardPage /></ProtectedRoute>} />
+          <Route path="/missions" element={<ProtectedRoute><MissionsPage /></ProtectedRoute>} />
+          <Route path="/maps" element={<ProtectedRoute><MapsPage /></ProtectedRoute>} />
+          <Route path="/users" element={<ProtectedRoute><UsersPage /></ProtectedRoute>} />
+          <Route path="/login" element={<LoginPage />} />
         </Routes>
       </div>
     </div>
