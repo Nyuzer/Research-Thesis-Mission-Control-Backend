@@ -1,3 +1,4 @@
+from __future__ import annotations
 import sys, os as _os
 # Ensure 'app' package is importable regardless of how main.py is invoked
 _project_root = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))

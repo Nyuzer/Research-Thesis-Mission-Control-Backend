@@ -1,3 +1,4 @@
+from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from collections import defaultdict
 from typing import List, Optional
