@@ -4,6 +4,7 @@ import logging
 from app.auth.dependencies import get_current_user, require_role
 from app.auth.models import UserResponse, UserRole
 from .generator import generate_map_from_image, get_supported_crs
+from .overpass import query_osm_features
 
 logger = logging.getLogger(__name__)
 
@@ -41,3 +42,39 @@ async def generate_map(
     except Exception as e:
         logger.error(f"Map generation failed: {e}")
         raise HTTPException(status_code=500, detail=f"Map generation failed: {e}")
+
+
+@router.post("/overpass")
+async def overpass_proxy(
+    data: dict = Body(...),
+    _user: UserResponse = Depends(get_current_user),
+):
+    """
+    Query Overpass API for OSM features within a bounding box.
+    Classifies features as occupied/free/unknown for occupancy grid generation.
+
+    Body: { south, west, north, east } (WGS84 coordinates)
+    """
+    south = data.get("south")
+    west = data.get("west")
+    north = data.get("north")
+    east = data.get("east")
+
+    if None in (south, west, north, east):
+        raise HTTPException(status_code=400, detail="south, west, north, east are required")
+
+    # Limit bbox size (~2km max dimension)
+    if abs(north - south) > 0.025 or abs(east - west) > 0.04:
+        raise HTTPException(
+            status_code=400,
+            detail="Bounding box too large for OSM query. Max ~2km x 2km.",
+        )
+
+    try:
+        result = await query_osm_features(
+            float(south), float(west), float(north), float(east)
+        )
+        return result
+    except Exception as e:
+        logger.error(f"Overpass query failed: {e}")
+        raise HTTPException(status_code=502, detail=f"Overpass API error: {e}")
