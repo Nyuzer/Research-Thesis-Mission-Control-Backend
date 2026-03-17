@@ -8,6 +8,7 @@ from app.auth.dependencies import get_current_user, require_role
 from app.auth.models import UserResponse, UserRole
 from app.statistics.router import router as statistics_router
 from app.zones.router import router as zones_router
+from app.mapgen.router import router as mapgen_router
 from pydantic import BaseModel, field_validator
 from typing import List, Optional, Tuple
 from contextlib import asynccontextmanager
@@ -63,6 +64,7 @@ app = FastAPI(title="Mission Control Backend", version="1.0.0", lifespan=lifespa
 app.include_router(auth_router)
 app.include_router(statistics_router)
 app.include_router(zones_router)
+app.include_router(mapgen_router)
 
 # CORS middleware for web UI
 app.add_middleware(

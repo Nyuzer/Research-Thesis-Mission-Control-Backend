@@ -5,11 +5,12 @@ import MapsPage from "./pages/MapsPage";
 import LoginPage from "./pages/LoginPage";
 import UsersPage from "./pages/UsersPage";
 import StatisticsPage from "./pages/StatisticsPage";
+import MapGenPage from "./pages/MapGenPage";
 import ProtectedRoute from "./components/ProtectedRoute";
 import { cn } from "@/lib/utils";
 import { useTheme } from "@/lib/theme";
 import { useAuthStore } from "@/utils/auth";
-import { LayoutDashboard, ListChecks, Map, Sun, Moon, Users, LogOut, BarChart3 } from "lucide-react";
+import { LayoutDashboard, ListChecks, Map, Sun, Moon, Users, LogOut, BarChart3, PenTool } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 export default function App() {
@@ -34,6 +35,7 @@ export default function App() {
     { to: "/missions", label: "Missions", icon: ListChecks, match: (p: string) => p === "/missions" },
     { to: "/maps", label: "Maps", icon: Map, match: (p: string) => p === "/maps" },
     { to: "/statistics", label: "Statistics", icon: BarChart3, match: (p: string) => p === "/statistics" },
+    { to: "/mapgen", label: "Map Gen", icon: PenTool, match: (p: string) => p === "/mapgen" },
     ...(user?.role === "admin"
       ? [{ to: "/users", label: "Users", icon: Users, match: (p: string) => p === "/users" }]
       : []),
@@ -103,6 +105,7 @@ export default function App() {
           <Route path="/missions" element={<ProtectedRoute><MissionsPage /></ProtectedRoute>} />
           <Route path="/maps" element={<ProtectedRoute><MapsPage /></ProtectedRoute>} />
           <Route path="/statistics" element={<ProtectedRoute><StatisticsPage /></ProtectedRoute>} />
+          <Route path="/mapgen" element={<ProtectedRoute><MapGenPage /></ProtectedRoute>} />
           <Route path="/users" element={<ProtectedRoute><UsersPage /></ProtectedRoute>} />
           <Route path="/login" element={<LoginPage />} />
         </Routes>

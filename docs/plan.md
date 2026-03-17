@@ -38,7 +38,7 @@
 
 ## Phase 5: Map Generation Page
 
-- [ ] 5A.1 — Backend map generation module (`mapgen/__init__.py`, `router.py`, `generator.py`)
-- [ ] 5A.2 — Mount mapgen router in main.py
-- [ ] 5B.1 — Create frontend MapGenPage with canvas drawing tools
-- [ ] 5B.2 — Add MapGen route and nav item to App.tsx
+- [x] 5A.1 — Backend map generation module (`mapgen/__init__.py`, `router.py`, `generator.py`)
+- [x] 5A.2 — Mount mapgen router in main.py
+- [x] 5B.1 — Create frontend MapGenPage with canvas drawing tools
+- [x] 5B.2 — Add MapGen route and nav item to App.tsx
