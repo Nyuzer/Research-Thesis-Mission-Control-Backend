@@ -1,6 +1,11 @@
-from fastapi import FastAPI, HTTPException, File, UploadFile, Body, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, File, UploadFile, Body, WebSocket, WebSocketDisconnect, Depends
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
+
+from app.auth.router import router as auth_router
+from app.auth.bootstrap import create_default_admin
+from app.auth.dependencies import get_current_user, require_role
+from app.auth.models import UserResponse, UserRole
 from pydantic import BaseModel, field_validator
 from typing import List, Optional, Tuple
 from contextlib import asynccontextmanager
@@ -34,6 +39,7 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
+    create_default_admin()
     start_scheduler()
     # Start WS broadcast loop
     global ws_broadcast_task
@@ -50,6 +56,9 @@ async def lifespan(app: FastAPI):
             pass
 
 app = FastAPI(title="Mission Control Backend", version="1.0.0", lifespan=lifespan)
+
+# Auth router
+app.include_router(auth_router)
 
 # CORS middleware for web UI
 app.add_middleware(
@@ -1428,7 +1437,8 @@ async def health_check():
 @app.post("/api/maps/upload")
 async def upload_map(
     map_yaml: UploadFile = File(..., description="Map YAML file (map.yaml)"),
-    map_image: UploadFile = File(..., description="Map image file (map.png)")
+    map_image: UploadFile = File(..., description="Map image file (map.png)"),
+    _user: UserResponse = Depends(require_role(UserRole.admin, UserRole.operator)),
 ):
     """Upload a new map with map.yaml and map.png files"""
     
@@ -1495,13 +1505,13 @@ async def upload_map(
         raise HTTPException(status_code=500, detail=f"Error uploading map: {str(e)}")
 
 @app.get("/api/robots")
-async def list_robots():
+async def list_robots(_user: UserResponse = Depends(get_current_user)):
     """List robots from FIWARE Orion as RobotInfo objects"""
     robots = await list_robots_from_orion()
     return {"robots": [r.model_dump() for r in robots], "count": len(robots)}
 
 @app.get("/api/maps")
-async def list_maps():
+async def list_maps(_user: UserResponse = Depends(get_current_user)):
     """List all available maps by scanning the maps directory and reading map.yaml files"""
     # Use global maps lock for listing operation
     with maps_lock:
@@ -1532,7 +1542,7 @@ async def list_maps():
         return {"maps": maps, "count": len(maps)}
 
 @app.get("/api/maps/{map_id}")
-async def get_map_info(map_id: str):
+async def get_map_info(map_id: str, _user: UserResponse = Depends(get_current_user)):
     """Get information about a specific map by reading its map.yaml"""
     # Get map-specific lock for read operation
     with maps_lock:
@@ -1564,7 +1574,7 @@ async def get_map_info(map_id: str):
             raise HTTPException(status_code=500, detail=f"Error reading map.yaml: {str(e)}")
 
 @app.get("/api/maps/{map_id}/files")
-async def get_map_files_info(map_id: str):
+async def get_map_files_info(map_id: str, _user: UserResponse = Depends(get_current_user)):
     """Get map files information and download links for robots"""
     map_dir = f"maps/{map_id}"
     yaml_path = f"{map_dir}/map.yaml"
@@ -1629,7 +1639,7 @@ async def download_map_image(map_id: str):
     return FileResponse(image_path, media_type=media_type, headers={"Content-Disposition": "inline"})
 
 @app.delete("/api/maps/{map_id}")
-async def delete_map(map_id: str):
+async def delete_map(map_id: str, _user: UserResponse = Depends(require_role(UserRole.admin, UserRole.operator))):
     """Delete a map by map_id"""
     
     # Input validation - Task 6
@@ -1946,7 +1956,7 @@ def delete_local_mission(mission_id: str):
 
 # Mission Control Endpoints
 @app.post("/api/missions/send")
-async def send_mission(mission: MissionRequest):
+async def send_mission(mission: MissionRequest, _user: UserResponse = Depends(require_role(UserRole.admin, UserRole.operator))):
     """Send mission command to robot via FIWARE"""
     # Validate map exists via file system
     yaml_path = f"maps/{mission.mapId}/map.yaml"
@@ -2006,7 +2016,7 @@ async def send_mission(mission: MissionRequest):
     }
 
 @app.get("/api/missions")
-async def list_missions():
+async def list_missions(_user: UserResponse = Depends(get_current_user)):
     """List all missions from FIWARE Orion Context Broker"""
     missions = await list_missions_from_orion()
     
@@ -2020,7 +2030,7 @@ async def list_missions():
     }
 
 @app.get("/api/missions/{mission_id}")
-async def get_mission(mission_id: str):
+async def get_mission(mission_id: str, _user: UserResponse = Depends(get_current_user)):
     """Get specific mission details from FIWARE Orion Context Broker"""
     mission = await get_mission_from_orion(mission_id)
     
@@ -2034,7 +2044,7 @@ async def get_mission(mission_id: str):
 
 
 @app.patch("/api/missions/{mission_id}/status")
-async def unified_update_mission_status(mission_id: str, update: dict = Body(...)):
+async def unified_update_mission_status(mission_id: str, update: dict = Body(...), _user: UserResponse = Depends(require_role(UserRole.admin, UserRole.operator))):
     """
     Unified status update endpoint for both regular and scheduled missions.
     Example payload:
@@ -2088,7 +2098,7 @@ async def unified_update_mission_status(mission_id: str, update: dict = Body(...
     raise HTTPException(status_code=404, detail="Mission not found (neither regular nor scheduled)")
 
 @app.delete("/api/missions/{mission_id}")
-async def delete_mission(mission_id: str):
+async def delete_mission(mission_id: str, _user: UserResponse = Depends(require_role(UserRole.admin, UserRole.operator))):
     """Delete mission from FIWARE Orion Context Broker"""
     entity_id = f"urn:ngsi-ld:Mission:{mission_id}"
     
@@ -2134,7 +2144,7 @@ async def delete_mission(mission_id: str):
 
 # Local MQTT Endpoints (separate from FIWARE)
 @app.post("/api/local-mqtt/missions/send")
-async def send_mission_local_mqtt(mission: MissionRequest):
+async def send_mission_local_mqtt(mission: MissionRequest, _user: UserResponse = Depends(require_role(UserRole.admin, UserRole.operator))):
     """Send mission command to robot via Local MQTT"""
     # Validate map exists via file system
     yaml_path = f"maps/{mission.mapId}/map.yaml"
@@ -2211,7 +2221,7 @@ async def send_mission_local_mqtt(mission: MissionRequest):
         raise HTTPException(status_code=500, detail=f"Unexpected error sending mission via Local MQTT: {str(e)}")
 
 @app.get("/api/local-mqtt/missions")
-async def list_missions_local_mqtt():
+async def list_missions_local_mqtt(_user: UserResponse = Depends(get_current_user)):
     """List all missions from Local Storage"""
     missions = list_local_missions()
     missions_dict = [mission.model_dump() for mission in missions]
@@ -2224,7 +2234,7 @@ async def list_missions_local_mqtt():
     }
 
 @app.get("/api/local-mqtt/missions/{mission_id}")
-async def get_mission_local_mqtt(mission_id: str):
+async def get_mission_local_mqtt(mission_id: str, _user: UserResponse = Depends(get_current_user)):
     """Get specific mission details from Local Storage"""
     mission = get_local_mission(mission_id)
     
@@ -2238,7 +2248,7 @@ async def get_mission_local_mqtt(mission_id: str):
     return mission_dict
 
 @app.patch("/api/local-mqtt/missions/{mission_id}/status")
-async def update_mission_status_local_mqtt(mission_id: str, status_update: MissionStatusUpdate):
+async def update_mission_status_local_mqtt(mission_id: str, status_update: MissionStatusUpdate, _user: UserResponse = Depends(require_role(UserRole.admin, UserRole.operator))):
     """Update mission status in Local Storage"""
     try:
         # Update status in local storage
@@ -2268,7 +2278,7 @@ async def update_mission_status_local_mqtt(mission_id: str, status_update: Missi
         raise HTTPException(status_code=500, detail=f"Unexpected error updating mission status: {str(e)}")
 
 @app.delete("/api/local-mqtt/missions/{mission_id}")
-async def delete_mission_local_mqtt(mission_id: str):
+async def delete_mission_local_mqtt(mission_id: str, _user: UserResponse = Depends(require_role(UserRole.admin, UserRole.operator))):
     """Delete mission from Local Storage"""
     success = delete_local_mission(mission_id)
     
@@ -2284,7 +2294,7 @@ async def delete_mission_local_mqtt(mission_id: str):
 
 # Robot Control Endpoints
 @app.post("/api/robot/{robot_id}/stop")
-async def stop_robot(robot_id: str):
+async def stop_robot(robot_id: str, _user: UserResponse = Depends(require_role(UserRole.admin, UserRole.operator))):
     """Stop specific robot - sends STOP command via FIWARE IoT Agent"""
     
     # Validate robot_id (basic validation)
@@ -2329,7 +2339,7 @@ async def stop_robot(robot_id: str):
         )
 
 @app.post("/api/robot/local-mqtt/{robot_id}/stop")
-async def stop_robot_local_mqtt(robot_id: str):
+async def stop_robot_local_mqtt(robot_id: str, _user: UserResponse = Depends(require_role(UserRole.admin, UserRole.operator))):
     """Stop specific robot - sends STOP command via Local MQTT"""
     
     # Validate robot_id (basic validation)
@@ -2619,7 +2629,7 @@ async def test_coordinate_transformations():
         }
 
 @app.post("/api/scheduled-missions")
-async def create_scheduled_mission(request: MissionScheduledRequest = Body(...)):
+async def create_scheduled_mission(request: MissionScheduledRequest = Body(...), _user: UserResponse = Depends(require_role(UserRole.admin, UserRole.operator))):
     """
     Create a scheduled mission.
     Request body examples:
@@ -2732,13 +2742,13 @@ async def create_scheduled_mission(request: MissionScheduledRequest = Body(...))
     }
 
 @app.get("/api/scheduled-missions")
-async def list_scheduled_missions():
+async def list_scheduled_missions(_user: UserResponse = Depends(get_current_user)):
     """List all scheduled missions from Orion"""
     missions = await list_scheduled_missions_from_orion()
     return {"scheduledMissions": [m.model_dump() for m in missions], "count": len(missions)}
 
 @app.get("/api/scheduled-missions/{mission_id}")
-async def get_scheduled_mission(mission_id: str):
+async def get_scheduled_mission(mission_id: str, _user: UserResponse = Depends(get_current_user)):
     """Get a specific scheduled mission from Orion"""
     mission = await get_scheduled_mission_from_orion(mission_id)
     if mission is None:
@@ -2746,7 +2756,7 @@ async def get_scheduled_mission(mission_id: str):
     return mission.model_dump()
 
 @app.patch("/api/scheduled-missions/{mission_id}")
-async def update_scheduled_mission(mission_id: str, update: dict = Body(...)):
+async def update_scheduled_mission(mission_id: str, update: dict = Body(...), _user: UserResponse = Depends(require_role(UserRole.admin, UserRole.operator))):
     """
     Update a scheduled mission in Orion.
     Example payload:
@@ -2772,7 +2782,7 @@ async def update_scheduled_mission(mission_id: str, update: dict = Body(...)):
     return result
 
 @app.delete("/api/scheduled-missions/{mission_id}")
-async def delete_scheduled_mission(mission_id: str):
+async def delete_scheduled_mission(mission_id: str, _user: UserResponse = Depends(require_role(UserRole.admin, UserRole.operator))):
     """Delete a scheduled mission from Orion and APScheduler"""
     # Remove from APScheduler first
     try:
@@ -2801,7 +2811,7 @@ async def delete_scheduled_mission(mission_id: str):
     return result
 
 @app.post("/api/scheduled-missions/execute-due")
-async def execute_due_missions():
+async def execute_due_missions(_user: UserResponse = Depends(require_role(UserRole.admin))):
     """
     Manually trigger execution of due scheduled missions.
     Useful for testing the deadline-based execution logic.
@@ -2814,7 +2824,7 @@ async def execute_due_missions():
         raise HTTPException(status_code=500, detail=f"Error executing due missions: {e}")
 
 @app.post("/api/scheduled-missions/cleanup-orphaned-jobs")
-async def cleanup_orphaned_jobs_endpoint():
+async def cleanup_orphaned_jobs_endpoint(_user: UserResponse = Depends(require_role(UserRole.admin))):
     """
     Manually clean up APScheduler jobs for missions that no longer exist in Orion.
     Useful when missions are deleted but jobs remain in the scheduler.
@@ -2827,7 +2837,7 @@ async def cleanup_orphaned_jobs_endpoint():
         raise HTTPException(status_code=500, detail=f"Error cleaning up orphaned jobs: {e}")
 
 @app.post("/api/scheduled-missions/cleanup-all-jobs")
-async def cleanup_all_jobs_endpoint():
+async def cleanup_all_jobs_endpoint(_user: UserResponse = Depends(require_role(UserRole.admin))):
     """
     Remove ALL APScheduler jobs. Use with caution - this will remove all scheduled missions.
     Useful for clearing orphaned jobs when Orion is empty.
@@ -2850,7 +2860,7 @@ async def cleanup_all_jobs_endpoint():
         raise HTTPException(status_code=500, detail=f"Failed to cleanup jobs: {e}")
 
 @app.post("/api/scheduled-missions/validate-missions")
-async def validate_missions_endpoint():
+async def validate_missions_endpoint(_user: UserResponse = Depends(require_role(UserRole.admin))):
     """Manually trigger mission validation and mark expired ones"""
     try:
         await validate_missions_on_startup()
@@ -2862,7 +2872,7 @@ async def validate_missions_endpoint():
         raise HTTPException(status_code=500, detail=f"Failed to validate missions: {e}")
 
 @app.get("/api/scheduled-missions/jobs")
-async def list_apscheduler_jobs():
+async def list_apscheduler_jobs(_user: UserResponse = Depends(require_role(UserRole.admin))):
     """List all active APScheduler jobs"""
     try:
         jobs = scheduler.get_jobs()

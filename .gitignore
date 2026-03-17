@@ -50,3 +50,4 @@ catkin_ws/
 # Logs
 *.log
 logs/
+MANUAL.md

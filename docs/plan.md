@@ -1,0 +1,44 @@
+# Implementation Plan
+
+## Phase 1: Authentication & Authorization + MQTT Security
+
+- [x] 1A.1 — Create auth module structure (`auth/__init__.py`, `models.py`, `database.py`)
+- [x] 1A.2 — Implement password hashing (`password.py`) and JWT handler (`jwt_handler.py`)
+- [x] 1A.3 — Implement auth config, dependencies, and router (`config.py`, `dependencies.py`, `router.py`)
+- [x] 1A.4 — Bootstrap default admin on startup (`bootstrap.py`) and mount auth router in `main.py`
+- [x] 1A.5 — Protect existing backend endpoints with auth dependencies
+- [ ] 1B.1 — Create frontend auth utilities (`auth.ts`) and Zustand auth store
+- [ ] 1B.2 — Create LoginPage and ProtectedRoute components
+- [ ] 1B.3 — Create UsersPage (admin user management)
+- [ ] 1B.4 — Integrate auth into App.tsx, api.ts, ws.ts (headers, guards, nav)
+- [ ] 1C.1 — MQTT access key security (env vars, Mosquitto auth config, remove hardcoded keys)
+
+## Phase 2: Statistics Dashboard
+
+- [ ] 2A.1 — Create backend statistics module (`statistics/__init__.py`, `router.py`, `aggregation.py`)
+- [ ] 2A.2 — Mount statistics router in main.py, protect with auth
+- [ ] 2B.1 — Create frontend StatisticsPage with charts (recharts)
+- [ ] 2B.2 — Add Statistics route and nav item to App.tsx
+
+## Phase 3: Parking Zones & Speed-Limit Zones
+
+- [ ] 3A.1 — Create backend zones module (`zones/__init__.py`, `router.py`, `models.py`)
+- [ ] 3A.2 — Mount zones router in main.py, protect with auth
+- [ ] 3B.1 — Add zone overlay rendering and drawing tools to MapView.tsx
+- [ ] 3B.2 — Add zone management panel/tab in RightPanel.tsx + state + API
+- [ ] 3C.1 — Update ROS bridge to parse zone data from mission commands
+
+## Phase 4: Advanced Mission Scenarios
+
+- [ ] 4A.1 — Backend multi-waypoint mission models and endpoints
+- [ ] 4A.2 — Backend mission templates CRUD
+- [ ] 4B.1 — Frontend mission scenario builder UI in RightPanel
+- [ ] 4B.2 — Multi-point click mode with numbered waypoints on MapView
+- [ ] 4C.1 — ROS bridge multi-step command parsing and execution
+
+## Phase 5: Map Generation Page
+
+- [ ] 5A.1 — Backend map generation module (`mapgen/__init__.py`, `router.py`, `generator.py`)
+- [ ] 5A.2 — Mount mapgen router in main.py
+- [ ] 5B.1 — Create frontend MapGenPage with canvas drawing tools
+- [ ] 5B.2 — Add MapGen route and nav item to App.tsx
