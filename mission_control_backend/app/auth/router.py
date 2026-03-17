@@ -1,4 +1,5 @@
 from __future__ import annotations
+from typing import List
 from fastapi import APIRouter, HTTPException, Depends
 from datetime import datetime, timezone
 import uuid
@@ -109,7 +110,7 @@ async def update_me(
 # ── Admin-only user management ──
 
 
-@router.get("/users", response_model=list[UserResponse])
+@router.get("/users", response_model=List[UserResponse])
 async def list_users(
     _admin: UserResponse = Depends(require_role(UserRole.admin)),
 ):

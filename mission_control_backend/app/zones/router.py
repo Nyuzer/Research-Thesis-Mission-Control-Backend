@@ -1,4 +1,5 @@
 from __future__ import annotations
+from typing import List
 from fastapi import APIRouter, HTTPException, Depends
 from datetime import datetime, timezone
 import uuid
@@ -49,7 +50,7 @@ def _entity_to_zone(entity: dict) -> ZoneResponse:
     )
 
 
-@router.get("", response_model=list[ZoneResponse])
+@router.get("", response_model=List[ZoneResponse])
 async def list_zones(map_id: str, _user: UserResponse = Depends(get_current_user)):
     params = {"type": "Zone", "q": f"mapId=={map_id}", "limit": "1000"}
     headers = {"Accept": "application/json", **{k: v for k, v in HEADERS.items() if k != "Content-Type"}}
