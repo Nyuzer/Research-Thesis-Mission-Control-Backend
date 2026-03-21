@@ -26,7 +26,7 @@ type OccupancyType = "free" | "occupied" | "unknown" | "parking" | "speed_limit"
 
 interface DrawnFeature {
   id: string;
-  tool: "brush" | "rectangle" | "polygon";
+  tool: "brush" | "rectangle" | "polygon" | "eraser";
   occupancy: OccupancyType;
   latlngs: any[] | any[][]; // L.LatLng arrays
   brushRadius?: number; // meters, for brush strokes
@@ -60,9 +60,12 @@ export default function MapGenPage() {
   /* ── Refs ── */
   const mapDivRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<any>(null);
-  const featuresLayerRef = useRef<any>(null);
   const bboxRectRef = useRef<any>(null);
   const tempLayerRef = useRef<any>(null);
+  const overlayCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const cursorCircleRef = useRef<any>(null);
+  const firstVertexMarkerRef = useRef<any>(null);
+  const featuresRef = useRef<DrawnFeature[]>([]);
 
   /* ── State ── */
   const [tool, setTool] = useState<ToolMode>("pan");
@@ -77,11 +80,110 @@ export default function MapGenPage() {
   const [saving, setSaving] = useState(false);
   const [osmLoading, setOsmLoading] = useState(false);
   const [baseLayer, setBaseLayer] = useState<"osm" | "ortho">("osm");
+  const [polyVertexCount, setPolyVertexCount] = useState(0);
 
   // Drawing state (not in React state for performance)
   const drawingRef = useRef(false);
   const currentStrokeRef = useRef<any[]>([]);
   const polyVerticesRef = useRef<any[]>([]);
+
+  // Keep featuresRef in sync
+  featuresRef.current = features;
+
+  /* ── Helper: meters per pixel at current zoom ── */
+  function getMetersPerPixel() {
+    const map = mapRef.current;
+    if (!map) return 1;
+    const center = map.getCenter();
+    const zoom = map.getZoom();
+    return 40075016.686 * Math.cos((center.lat * Math.PI) / 180) / Math.pow(2, zoom + 8);
+  }
+
+  /* ── Canvas rendering function ── */
+  const renderCanvas = useCallback(() => {
+    const map = mapRef.current;
+    const canvas = overlayCanvasRef.current;
+    if (!map || !canvas) return;
+
+    // Sync internal resolution with CSS size
+    const w = canvas.clientWidth;
+    const h = canvas.clientHeight;
+    if (w === 0 || h === 0) return;
+    if (canvas.width !== w || canvas.height !== h) {
+      canvas.width = w;
+      canvas.height = h;
+    }
+
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.clearRect(0, 0, w, h);
+
+    const mpp = getMetersPerPixel();
+    const feats = featuresRef.current;
+
+    for (const f of feats) {
+      const isEraser = f.tool === "eraser";
+      ctx.globalCompositeOperation = isEraser ? "destination-out" : "source-over";
+
+      if (isEraser) {
+        ctx.fillStyle = "rgba(0,0,0,1)";
+        ctx.strokeStyle = "rgba(0,0,0,1)";
+      } else {
+        ctx.fillStyle = OCCUPANCY_COLORS[f.occupancy].fill;
+        ctx.strokeStyle = OCCUPANCY_COLORS[f.occupancy].stroke;
+      }
+
+      if (f.tool === "brush" || f.tool === "eraser") {
+        const pts = f.latlngs as any[];
+        const radiusPx = (f.brushRadius || 3) / mpp;
+
+        if (pts.length === 1) {
+          const p = map.latLngToContainerPoint(pts[0]);
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, radiusPx, 0, Math.PI * 2);
+          ctx.fill();
+        } else {
+          ctx.lineWidth = radiusPx * 2;
+          ctx.lineCap = "round";
+          ctx.lineJoin = "round";
+          ctx.beginPath();
+          const first = map.latLngToContainerPoint(pts[0]);
+          ctx.moveTo(first.x, first.y);
+          for (let i = 1; i < pts.length; i++) {
+            const p = map.latLngToContainerPoint(pts[i]);
+            ctx.lineTo(p.x, p.y);
+          }
+          ctx.stroke();
+        }
+      } else if (f.tool === "rectangle") {
+        const corners = f.latlngs as any[];
+        const p1 = map.latLngToContainerPoint(corners[0]);
+        const p2 = map.latLngToContainerPoint(corners[1]);
+        const rx = Math.min(p1.x, p2.x), ry = Math.min(p1.y, p2.y);
+        const rw = Math.abs(p2.x - p1.x), rh = Math.abs(p2.y - p1.y);
+        ctx.fillRect(rx, ry, rw, rh);
+        ctx.lineWidth = 2;
+        ctx.strokeRect(rx, ry, rw, rh);
+      } else if (f.tool === "polygon") {
+        const pts = f.latlngs as any[];
+        if (pts.length >= 3) {
+          ctx.beginPath();
+          const first = map.latLngToContainerPoint(pts[0]);
+          ctx.moveTo(first.x, first.y);
+          for (let i = 1; i < pts.length; i++) {
+            const p = map.latLngToContainerPoint(pts[i]);
+            ctx.lineTo(p.x, p.y);
+          }
+          ctx.closePath();
+          ctx.fill();
+          ctx.lineWidth = 2;
+          ctx.stroke();
+        }
+      }
+    }
+
+    ctx.globalCompositeOperation = "source-over";
+  }, []);
 
   /* ── Initialize Leaflet ── */
   useEffect(() => {
@@ -112,16 +214,57 @@ export default function MapGenPage() {
     (map as any)._osmLayer = osmLayer;
     (map as any)._orthoLayer = orthoLayer;
 
-    const fg = L.layerGroup().addTo(map);
-    featuresLayerRef.current = fg;
+    // Canvas overlay inside map container, above tiles but below controls
+    const canvas = document.createElement("canvas");
+    canvas.style.position = "absolute";
+    canvas.style.top = "0";
+    canvas.style.left = "0";
+    canvas.style.width = "100%";
+    canvas.style.height = "100%";
+    canvas.style.zIndex = "401";
+    canvas.style.pointerEvents = "none";
+    map.getContainer().appendChild(canvas);
+    overlayCanvasRef.current = canvas;
+
     mapRef.current = map;
 
     return () => {
+      if (overlayCanvasRef.current?.parentNode) {
+        overlayCanvasRef.current.parentNode.removeChild(overlayCanvasRef.current);
+      }
+      overlayCanvasRef.current = null;
       map.remove();
       mapRef.current = null;
-      featuresLayerRef.current = null;
     };
   }, []);
+
+  /* ── Canvas re-render on map events ── */
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    let rafId = 0;
+    const onMapChange = () => {
+      cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(renderCanvas);
+    };
+
+    map.on("move", onMapChange);
+    map.on("zoom", onMapChange);
+    map.on("resize", onMapChange);
+
+    return () => {
+      cancelAnimationFrame(rafId);
+      map.off("move", onMapChange);
+      map.off("zoom", onMapChange);
+      map.off("resize", onMapChange);
+    };
+  }, [renderCanvas]);
+
+  /* ── Re-render canvas when features change ── */
+  useEffect(() => {
+    renderCanvas();
+  }, [features, renderCanvas]);
 
   /* ── Switch base layer ── */
   useEffect(() => {
@@ -137,41 +280,6 @@ export default function MapGenPage() {
       if (map.hasLayer(osm)) map.removeLayer(osm);
     }
   }, [baseLayer]);
-
-  /* ── Re-render features on Leaflet ── */
-  useEffect(() => {
-    const fg = featuresLayerRef.current;
-    if (!fg) return;
-    fg.clearLayers();
-
-    for (const f of features) {
-      const style = {
-        color: OCCUPANCY_COLORS[f.occupancy].stroke,
-        fillColor: OCCUPANCY_COLORS[f.occupancy].fill,
-        fillOpacity: 0.6,
-        weight: 2,
-      };
-
-      if (f.tool === "brush" && f.latlngs.length > 0) {
-        const coords = f.latlngs as any[];
-        if (coords.length === 1) {
-          L.circle(coords[0], { ...style, radius: f.brushRadius || brushSize }).addTo(fg);
-        } else {
-          const poly = L.polyline(coords, { ...style, weight: (f.brushRadius || brushSize) * 2 / getMetersPerPixel() });
-          poly.addTo(fg);
-          // Add circles at endpoints for rounded look
-          L.circle(coords[0], { ...style, radius: f.brushRadius || brushSize }).addTo(fg);
-          L.circle(coords[coords.length - 1], { ...style, radius: f.brushRadius || brushSize }).addTo(fg);
-        }
-      } else if (f.tool === "rectangle" && f.latlngs.length >= 2) {
-        const corners = f.latlngs as any[];
-        const bounds = L.latLngBounds(corners[0], corners[1]);
-        L.rectangle(bounds, style).addTo(fg);
-      } else if (f.tool === "polygon" && (f.latlngs as any[]).length >= 3) {
-        L.polygon(f.latlngs as any[], style).addTo(fg);
-      }
-    }
-  }, [features, brushSize]);
 
   /* ── Re-render bbox ── */
   useEffect(() => {
@@ -190,15 +298,6 @@ export default function MapGenPage() {
       }).addTo(map);
     }
   }, [bbox]);
-
-  /* ── Helper: meters per pixel at current zoom ── */
-  function getMetersPerPixel() {
-    const map = mapRef.current;
-    if (!map) return 1;
-    const center = map.getCenter();
-    const zoom = map.getZoom();
-    return 40075016.686 * Math.cos((center.lat * Math.PI) / 180) / Math.pow(2, zoom + 8);
-  }
 
   /* ── Cursor style based on tool ── */
   useEffect(() => {
@@ -233,9 +332,15 @@ export default function MapGenPage() {
     const map = mapRef.current;
     if (!map) return;
 
+    const SNAP_DIST_PX = 12; // px threshold to snap to first vertex
+
+    function cleanupPolyPreview() {
+      if (tempLayerRef.current) { map.removeLayer(tempLayerRef.current); tempLayerRef.current = null; }
+      if (firstVertexMarkerRef.current) { map.removeLayer(firstVertexMarkerRef.current); firstVertexMarkerRef.current = null; }
+    }
+
     function onMouseDown(e: any) {
       if (tool === "pan") return;
-
       if (tool === "brush" || tool === "eraser") {
         drawingRef.current = true;
         currentStrokeRef.current = [e.latlng];
@@ -243,21 +348,75 @@ export default function MapGenPage() {
         drawingRef.current = true;
         currentStrokeRef.current = [e.latlng];
       }
-      // Polygon uses click, not mousedown
     }
 
     function onMouseMove(e: any) {
+      // Brush/eraser cursor circle
+      if (tool === "brush" || tool === "eraser") {
+        if (cursorCircleRef.current) map.removeLayer(cursorCircleRef.current);
+        cursorCircleRef.current = L.circle(e.latlng, {
+          radius: brushSize,
+          color: tool === "eraser" ? "#ef4444" : OCCUPANCY_COLORS[occupancy].stroke,
+          weight: 1.5,
+          fillOpacity: 0.08,
+          fill: true,
+          dashArray: "4 4",
+          interactive: false,
+        }).addTo(map);
+      }
+
+      // Polygon live preview: line from vertices to cursor
+      if (tool === "polygon" && polyVerticesRef.current.length > 0) {
+        if (tempLayerRef.current) map.removeLayer(tempLayerRef.current);
+
+        const verts = polyVerticesRef.current;
+        const previewPts = [...verts, e.latlng];
+
+        if (verts.length >= 3) {
+          // Show closed polygon preview
+          tempLayerRef.current = L.polygon(previewPts, {
+            color: OCCUPANCY_COLORS[occupancy].stroke,
+            fillColor: OCCUPANCY_COLORS[occupancy].fill,
+            fillOpacity: 0.25,
+            weight: 2,
+            dashArray: "6 3",
+          }).addTo(map);
+        } else {
+          // Show polyline preview
+          tempLayerRef.current = L.polyline(previewPts, {
+            color: OCCUPANCY_COLORS[occupancy].stroke,
+            weight: 2,
+            dashArray: "6 3",
+          }).addTo(map);
+        }
+
+        // First-vertex snap indicator
+        if (firstVertexMarkerRef.current) map.removeLayer(firstVertexMarkerRef.current);
+        if (verts.length >= 3) {
+          const firstPx = map.latLngToContainerPoint(verts[0]);
+          const cursorPx = map.latLngToContainerPoint(e.latlng);
+          const isNear = firstPx.distanceTo(cursorPx) < SNAP_DIST_PX;
+          firstVertexMarkerRef.current = L.circleMarker(verts[0], {
+            radius: isNear ? 10 : 6,
+            color: isNear ? "#22d3ee" : OCCUPANCY_COLORS[occupancy].stroke,
+            fillColor: isNear ? "#22d3ee" : "#fff",
+            fillOpacity: isNear ? 0.6 : 0.4,
+            weight: 2,
+            interactive: false,
+          }).addTo(map);
+        }
+      }
+
       if (!drawingRef.current) return;
 
       if (tool === "brush" || tool === "eraser") {
         currentStrokeRef.current.push(e.latlng);
-        // Show preview
         if (tempLayerRef.current) map.removeLayer(tempLayerRef.current);
-        const occ = tool === "eraser" ? "unknown" : occupancy;
         tempLayerRef.current = L.polyline(currentStrokeRef.current, {
-          color: OCCUPANCY_COLORS[occ].stroke,
+          color: tool === "eraser" ? "#ef4444" : OCCUPANCY_COLORS[occupancy].stroke,
           weight: brushSize * 2 / getMetersPerPixel(),
-          opacity: 0.5,
+          opacity: tool === "eraser" ? 0.4 : 0.5,
+          dashArray: tool === "eraser" ? "6 3" : undefined,
         }).addTo(map);
       } else if (tool === "rectangle" || tool === "bbox") {
         if (tempLayerRef.current) map.removeLayer(tempLayerRef.current);
@@ -275,7 +434,7 @@ export default function MapGenPage() {
     function onMouseUp(e: any) {
       if (!drawingRef.current) return;
       drawingRef.current = false;
-      if (tempLayerRef.current) {
+      if (tempLayerRef.current && tool !== "polygon") {
         map.removeLayer(tempLayerRef.current);
         tempLayerRef.current = null;
       }
@@ -284,9 +443,10 @@ export default function MapGenPage() {
         const pts = currentStrokeRef.current;
         if (pts.length > 0) {
           const occ = tool === "eraser" ? "unknown" : occupancy;
+          const featureTool = tool === "eraser" ? "eraser" as const : "brush" as const;
           setFeatures((prev) => [
             ...prev,
-            { id: nextId(), tool: "brush", occupancy: occ, latlngs: [...pts], brushRadius: brushSize },
+            { id: nextId(), tool: featureTool, occupancy: occ, latlngs: [...pts], brushRadius: brushSize },
           ]);
         }
         currentStrokeRef.current = [];
@@ -310,30 +470,43 @@ export default function MapGenPage() {
     }
 
     function onClick(e: any) {
-      if (tool === "polygon") {
-        polyVerticesRef.current.push(e.latlng);
-        // Preview
-        if (tempLayerRef.current) map.removeLayer(tempLayerRef.current);
-        if (polyVerticesRef.current.length >= 2) {
-          tempLayerRef.current = L.polyline(polyVerticesRef.current, {
-            color: OCCUPANCY_COLORS[occupancy].stroke,
-            weight: 2,
-          }).addTo(map);
+      if (tool !== "polygon") return;
+
+      const verts = polyVerticesRef.current;
+
+      // If >= 3 vertices and click is near the first vertex → close polygon
+      if (verts.length >= 3) {
+        const firstPx = map.latLngToContainerPoint(verts[0]);
+        const clickPx = map.latLngToContainerPoint(e.latlng);
+        if (firstPx.distanceTo(clickPx) < SNAP_DIST_PX) {
+          // Copy latlngs BEFORE clearing — setFeatures callback runs async
+          const latlngs = [...verts];
+          verts.length = 0;
+          setFeatures((prev) => [
+            ...prev,
+            { id: nextId(), tool: "polygon", occupancy, latlngs },
+          ]);
+          setPolyVertexCount(0);
+          cleanupPolyPreview();
+          return;
         }
       }
-    }
 
-    function onDblClick(e: any) {
-      if (tool === "polygon" && polyVerticesRef.current.length >= 3) {
-        setFeatures((prev) => [
-          ...prev,
-          { id: nextId(), tool: "polygon", occupancy, latlngs: [...polyVerticesRef.current] },
-        ]);
-        polyVerticesRef.current = [];
-        if (tempLayerRef.current) {
-          map.removeLayer(tempLayerRef.current);
-          tempLayerRef.current = null;
-        }
+      // Otherwise add vertex
+      verts.push(e.latlng);
+      setPolyVertexCount(verts.length);
+
+      // Show first-vertex marker starting from vertex 1
+      if (verts.length === 1) {
+        if (firstVertexMarkerRef.current) map.removeLayer(firstVertexMarkerRef.current);
+        firstVertexMarkerRef.current = L.circleMarker(verts[0], {
+          radius: 6,
+          color: OCCUPANCY_COLORS[occupancy].stroke,
+          fillColor: "#fff",
+          fillOpacity: 0.4,
+          weight: 2,
+          interactive: false,
+        }).addTo(map);
       }
     }
 
@@ -341,14 +514,14 @@ export default function MapGenPage() {
     map.on("mousemove", onMouseMove);
     map.on("mouseup", onMouseUp);
     map.on("click", onClick);
-    map.on("dblclick", onDblClick);
 
     return () => {
       map.off("mousedown", onMouseDown);
       map.off("mousemove", onMouseMove);
       map.off("mouseup", onMouseUp);
       map.off("click", onClick);
-      map.off("dblclick", onDblClick);
+      if (cursorCircleRef.current) { map.removeLayer(cursorCircleRef.current); cursorCircleRef.current = null; }
+      cleanupPolyPreview();
     };
   }, [tool, occupancy, brushSize]);
 
@@ -383,10 +556,33 @@ export default function MapGenPage() {
   };
 
   /* ── Undo ── */
-  const undo = () => setFeatures((prev) => prev.slice(0, -1));
+  const undo = () => {
+    // If placing polygon vertices, undo removes last vertex
+    if (tool === "polygon" && polyVerticesRef.current.length > 0) {
+      polyVerticesRef.current.pop();
+      setPolyVertexCount(polyVerticesRef.current.length);
+      const map = mapRef.current;
+      if (map) {
+        if (tempLayerRef.current) { map.removeLayer(tempLayerRef.current); tempLayerRef.current = null; }
+        if (firstVertexMarkerRef.current) { map.removeLayer(firstVertexMarkerRef.current); firstVertexMarkerRef.current = null; }
+        // Preview will be redrawn on next mousemove
+      }
+      return;
+    }
+    setFeatures((prev) => prev.slice(0, -1));
+  };
 
   /* ── Clear all ── */
-  const clearAll = () => { setFeatures([]); };
+  const clearAll = () => {
+    setFeatures([]);
+    polyVerticesRef.current = [];
+    setPolyVertexCount(0);
+    const map = mapRef.current;
+    if (map) {
+      if (tempLayerRef.current) { map.removeLayer(tempLayerRef.current); tempLayerRef.current = null; }
+      if (firstVertexMarkerRef.current) { map.removeLayer(firstVertexMarkerRef.current); firstVertexMarkerRef.current = null; }
+    }
+  };
 
   /* ── Export: rasterize to PNG and save ── */
   const exportMap = async () => {
@@ -438,7 +634,7 @@ export default function MapGenPage() {
         ctx.fillStyle = `rgb(${r},${g},${b})`;
         ctx.strokeStyle = `rgb(${r},${g},${b})`;
 
-        if (f.tool === "brush") {
+        if (f.tool === "brush" || f.tool === "eraser") {
           const pts = f.latlngs as any[];
           const radiusPx = (f.brushRadius || brushSize) / res;
           ctx.lineWidth = radiusPx * 2;
@@ -608,8 +804,8 @@ export default function MapGenPage() {
             { t: "bbox" as ToolMode, icon: Scan, label: "Bounding Box" },
             { t: "brush" as ToolMode, icon: Paintbrush, label: "Brush" },
             { t: "rectangle" as ToolMode, icon: Square, label: "Rectangle" },
-            { t: "polygon" as ToolMode, icon: Pentagon, label: "Polygon (dbl-click)" },
-            { t: "eraser" as ToolMode, icon: Eraser, label: "Eraser (→ unknown)" },
+            { t: "polygon" as ToolMode, icon: Pentagon, label: "Polygon" },
+            { t: "eraser" as ToolMode, icon: Eraser, label: "Eraser" },
           ]).map(({ t, icon: Icon, label }) => (
             <button
               key={t}
@@ -629,7 +825,7 @@ export default function MapGenPage() {
         {(tool === "brush" || tool === "eraser") && (
           <div className="space-y-1">
             <Label className="text-[10px] text-muted-foreground uppercase tracking-wider">
-              Brush: {brushSize}m
+              {tool === "eraser" ? "Eraser" : "Brush"}: {brushSize}m
             </Label>
             <input
               type="range" min="1" max="50" value={brushSize}
@@ -667,24 +863,25 @@ export default function MapGenPage() {
 
         {/* Undo / Clear */}
         <div className="flex gap-1">
-          <Button size="sm" variant="outline" className="flex-1 text-xs h-7" onClick={undo} disabled={features.length === 0}>
+          <Button size="sm" variant="outline" className="flex-1 text-xs h-7" onClick={undo} disabled={features.length === 0 && polyVertexCount === 0}>
             <Undo2 className="h-3 w-3 mr-1" /> Undo
           </Button>
-          <Button size="sm" variant="outline" className="flex-1 text-xs h-7 text-red-400" onClick={clearAll} disabled={features.length === 0}>
+          <Button size="sm" variant="outline" className="flex-1 text-xs h-7 text-red-400" onClick={clearAll} disabled={features.length === 0 && polyVertexCount === 0}>
             <Trash2 className="h-3 w-3 mr-1" /> Clear
           </Button>
         </div>
 
         <p className="text-[10px] text-muted-foreground">
           {features.length} feature{features.length !== 1 ? "s" : ""} drawn
+          {polyVertexCount > 0 && ` | ${polyVertexCount} vertices`}
         </p>
       </div>
 
       {/* ── CENTER: MAP ── */}
       <div className="flex-1 relative">
-        {/* Search bar */}
-        <div className="absolute top-3 left-3 right-56 z-[1000]">
-          <div className="relative max-w-md">
+        {/* Search bar - centered */}
+        <div className="absolute top-3 left-0 right-0 z-[1000] flex justify-center pointer-events-none">
+          <div className="relative max-w-md w-full mx-4 pointer-events-auto">
             <Search className="absolute left-2.5 top-2 h-4 w-4 text-muted-foreground" />
             <input
               type="text"
@@ -710,7 +907,7 @@ export default function MapGenPage() {
           </div>
         </div>
 
-        {/* Leaflet map */}
+        {/* Leaflet map (canvas overlay is created inside programmatically) */}
         <div ref={mapDivRef} className="absolute inset-0 z-0" />
       </div>
 
