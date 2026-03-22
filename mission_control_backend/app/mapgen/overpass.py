@@ -56,32 +56,69 @@ async def query_osm_features(south: float, west: float, north: float, east: floa
         tags = element.get("tags", {})
         occupancy = _classify(tags)
 
+        props = {
+            "occupancy": occupancy,
+            "osm_type": _tag_type(tags),
+        }
+        # Include road width (meters) for LineString road features
+        highway = tags.get("highway")
+        if highway and geom.get("type") == "LineString":
+            props["width"] = _ROAD_WIDTH.get(highway, 4)
+
         features.append({
             "type": "Feature",
             "geometry": geom,
-            "properties": {
-                "occupancy": occupancy,
-                "osm_type": _tag_type(tags),
-            },
+            "properties": props,
         })
 
     logger.info(f"Overpass returned {len(features)} classified features for bbox {bbox}")
     return {"type": "FeatureCollection", "features": features}
 
 
+_ROAD_WIDTH: dict = {
+    "motorway": 16,
+    "trunk": 14,
+    "primary": 12,
+    "secondary": 10,
+    "tertiary": 8,
+    "residential": 6,
+    "service": 4,
+    "unclassified": 6,
+    "living_street": 5,
+    "pedestrian": 4,
+    "footway": 2,
+    "cycleway": 2,
+    "path": 1.5,
+}
+
+
 def _element_to_geojson(el: dict) -> Optional[dict]:
-    """Convert Overpass element to GeoJSON geometry."""
+    """Convert Overpass element to GeoJSON geometry.
+
+    Roads (highway=*) are returned as LineString with a width property
+    so the frontend can render them as buffered strokes rather than
+    broken polygons.
+    """
+    tags = el.get("tags", {})
+    is_road = bool(tags.get("highway"))
+
     if el.get("type") == "way" and "geometry" in el:
         coords = [[n["lon"], n["lat"]] for n in el["geometry"]]
+
+        if is_road:
+            # Roads are lines, not areas – return as LineString
+            if len(coords) < 2:
+                return None
+            return {"type": "LineString", "coordinates": coords}
+
+        # Area features: polygon
         if len(coords) < 3:
             return None
-        # Close ring if not closed
         if coords[0] != coords[-1]:
             coords.append(coords[0])
         return {"type": "Polygon", "coordinates": [coords]}
 
     if el.get("type") == "relation" and "members" in el:
-        # Take the first outer way with geometry
         for member in el["members"]:
             if member.get("role") == "outer" and "geometry" in member:
                 coords = [[n["lon"], n["lat"]] for n in member["geometry"]]

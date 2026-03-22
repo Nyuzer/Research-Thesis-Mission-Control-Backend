@@ -111,6 +111,8 @@ function ZonePolygon({
   name,
   speedLimit,
   color,
+  goalPoint,
+  isDefault,
   toPixel,
 }: {
   polygon: number[][];
@@ -118,6 +120,8 @@ function ZonePolygon({
   name: string;
   speedLimit?: number | null;
   color?: string | null;
+  goalPoint?: number[] | null;
+  isDefault?: boolean | null;
   toPixel: (wx: number, wy: number) => { cx: number; cy: number };
 }) {
   const points = polygon.map(([x, y]) => toPixel(x, y));
@@ -128,7 +132,12 @@ function ZonePolygon({
   // Centroid for label
   const cx = points.reduce((s, p) => s + p.cx, 0) / points.length;
   const cy = points.reduce((s, p) => s + p.cy, 0) / points.length;
-  const label = zoneType === "parking" ? `P: ${name}` : `${speedLimit ?? "?"} m/s`;
+  const defaultStar = isDefault ? " \u2605" : "";
+  const label = zoneType === "parking" ? `P: ${name}${defaultStar}` : `${speedLimit ?? "?"} m/s`;
+
+  // Goal point marker
+  const gp = goalPoint && goalPoint.length >= 2 ? toPixel(goalPoint[0], goalPoint[1]) : null;
+  const gpValid = gp && isFinite(gp.cx) && isFinite(gp.cy);
 
   return (
     <g>
@@ -136,6 +145,19 @@ function ZonePolygon({
       <text x={cx} y={cy} textAnchor="middle" dominantBaseline="central" fill={stroke} fontSize="10" fontWeight="700" paintOrder="stroke" stroke="#0f172a" strokeWidth="2.5" strokeLinejoin="round" fontFamily="Inter, sans-serif">
         {label}
       </text>
+      {gpValid && (
+        <g>
+          {/* Green crosshair for goal point */}
+          <line x1={gp.cx - 8} y1={gp.cy} x2={gp.cx - 3} y2={gp.cy} stroke="#22c55e" strokeWidth="2" strokeLinecap="round" />
+          <line x1={gp.cx + 3} y1={gp.cy} x2={gp.cx + 8} y2={gp.cy} stroke="#22c55e" strokeWidth="2" strokeLinecap="round" />
+          <line x1={gp.cx} y1={gp.cy - 8} x2={gp.cx} y2={gp.cy - 3} stroke="#22c55e" strokeWidth="2" strokeLinecap="round" />
+          <line x1={gp.cx} y1={gp.cy + 3} x2={gp.cx} y2={gp.cy + 8} stroke="#22c55e" strokeWidth="2" strokeLinecap="round" />
+          <circle cx={gp.cx} cy={gp.cy} r="3" fill="#22c55e" stroke="#0f172a" strokeWidth="1" />
+          <text x={gp.cx} y={gp.cy - 12} textAnchor="middle" fill="#22c55e" fontSize="8" fontWeight="600" paintOrder="stroke" stroke="#0f172a" strokeWidth="2" strokeLinejoin="round" fontFamily="Inter, sans-serif">
+            GOAL
+          </text>
+        </g>
+      )}
     </g>
   );
 }
@@ -463,6 +485,8 @@ export default function MapView() {
                       name={z.name}
                       speedLimit={z.speedLimit}
                       color={z.color}
+                      goalPoint={z.goalPoint}
+                      isDefault={z.isDefault}
                       toPixel={toPixel}
                     />
                   ))}

@@ -95,6 +95,11 @@ LOCAL_MQTT_PORT = int(os.getenv("LOCAL_MQTT_PORT", "1883"))
 LOCAL_MQTT_USERNAME = os.getenv("LOCAL_MQTT_USERNAME", "")
 LOCAL_MQTT_PASSWORD = os.getenv("LOCAL_MQTT_PASSWORD", "")
 
+# Auto-park: track IDLE robots and send to default parking after timeout
+robot_idle_tracker: dict = {}   # {robot_id: {"idle_since": float, "sent": bool}}
+robot_last_map: dict = {}       # {robot_id: map_id} — set when sending missions
+AUTO_PARK_IDLE_SECONDS = 60
+
 # Local Mission Storage (for local MQTT mode)
 local_missions = {}
 local_missions_lock = Lock()
@@ -659,11 +664,98 @@ async def websocket_endpoint(websocket: WebSocket):
         if websocket in connected_websockets:
             connected_websockets.remove(websocket)
 
+async def get_default_parking_zone(map_id: str):
+    """Fetch the default parking zone for a map from FIWARE."""
+    orion_url = FIWARE_ORION_URL
+    params = {"type": "Zone", "q": "mapId=={};zoneType==parking;isDefault==true".format(map_id), "limit": "1"}
+    read_headers = {"Accept": "application/json", "fiware-service": FIWARE_SERVICE, "fiware-servicepath": FIWARE_SERVICE_PATH}
+    try:
+        async with httpx.AsyncClient() as client:
+            res = await client.get(orion_url, params=params, headers=read_headers, timeout=10.0)
+            if res.status_code == 404:
+                return None
+            res.raise_for_status()
+            entities = res.json()
+            if not entities:
+                return None
+            entity = entities[0]
+            # Parse goalPoint
+            gp_raw = entity.get("goalPoint", {}).get("value", "")
+            if isinstance(gp_raw, str) and gp_raw:
+                goal_point = json.loads(gp_raw)
+            elif isinstance(gp_raw, list):
+                goal_point = gp_raw
+            else:
+                # Fall back to polygon centroid
+                poly_raw = entity.get("polygon", {}).get("value", "[]")
+                if isinstance(poly_raw, str):
+                    poly = json.loads(poly_raw)
+                else:
+                    poly = poly_raw
+                if poly:
+                    n = len(poly)
+                    goal_point = [sum(p[0] for p in poly) / n, sum(p[1] for p in poly) / n]
+                else:
+                    return None
+            return {"goalPoint": goal_point, "mapId": map_id}
+    except Exception as e:
+        logger.error(f"Error fetching default parking zone: {e}")
+        return None
+
+
+async def check_auto_park(robots):
+    """Check IDLE robots and send them to default parking after timeout."""
+    now = time.time()
+    for robot in robots:
+        rid = robot.robotId
+        state = (robot.state or "").upper()
+        if state == "IDLE":
+            if rid not in robot_idle_tracker:
+                robot_idle_tracker[rid] = {"idle_since": now, "sent": False}
+            tracker = robot_idle_tracker[rid]
+            if tracker["sent"]:
+                continue
+            idle_duration = now - tracker["idle_since"]
+            if idle_duration >= AUTO_PARK_IDLE_SECONDS:
+                map_id = robot_last_map.get(rid)
+                if not map_id:
+                    continue
+                parking = await get_default_parking_zone(map_id)
+                if not parking:
+                    continue
+                gp = parking["goalPoint"]
+                # Check distance to goal point — skip if robot already near (< 2m)
+                if robot.position25832:
+                    rx, ry = robot.position25832
+                    dist = ((rx - gp[0]) ** 2 + (ry - gp[1]) ** 2) ** 0.5
+                    if dist < 2.0:
+                        tracker["sent"] = True
+                        logger.info(f"Robot {rid} already near parking, skipping auto-park")
+                        continue
+                # Send MOVE_TO command
+                try:
+                    cmd = CommandMessage(
+                        command="MOVE_TO",
+                        commandTime=datetime.utcnow().isoformat() + "Z",
+                        waypoints=Point(type="Point", coordinates=[gp[0], gp[1], 0]),
+                        mapId=map_id,
+                        missionId="autopark_{}".format(uuid.uuid4().hex[:6]),
+                    )
+                    await send_fiware_command(rid, cmd)
+                    tracker["sent"] = True
+                    logger.info(f"Auto-park: sent robot {rid} to default parking at [{gp[0]:.1f}, {gp[1]:.1f}]")
+                except Exception as e:
+                    logger.error(f"Auto-park failed for robot {rid}: {e}")
+        else:
+            # Robot not IDLE — reset tracker
+            robot_idle_tracker.pop(rid, None)
+
+
 async def ws_broadcast_loop():
     while True:
         try:
+            robots = await list_robots_from_orion()
             if connected_websockets:
-                robots = await list_robots_from_orion()
                 payload = {
                     "type": "robot_snapshot",
                     "ts": datetime.utcnow().isoformat() + "Z",
@@ -677,6 +769,11 @@ async def ws_broadcast_loop():
                     except Exception as e:
                         logger.warning(f"Dropping WS client due to send error: {e}")
                 connected_websockets[:] = living_clients
+            # Check auto-park after broadcast
+            try:
+                await check_auto_park(robots)
+            except Exception as e:
+                logger.error(f"Auto-park check error: {e}")
         except Exception as e:
             logger.error(f"WS broadcast loop error: {e}")
         # Broadcast interval
@@ -1541,7 +1638,7 @@ async def list_maps(_user: UserResponse = Depends(get_current_user)):
                         map_config = yaml.safe_load(f)
                     map_info = MapInfo(
                         mapId=map_id,
-                        name=map_config.get('image', map_id).replace('.png', '').replace('.pgm', ''),
+                        name=map_config.get('name', map_config.get('image', map_id).replace('.png', '').replace('.pgm', '')),
                         resolution=map_config.get('resolution', 0.1),
                         width=map_config.get('width', 0),
                         height=map_config.get('height', 0),
@@ -1574,7 +1671,7 @@ async def get_map_info(map_id: str, _user: UserResponse = Depends(get_current_us
                 map_config = yaml.safe_load(f)
             map_info = MapInfo(
                 mapId=map_id,
-                name=map_config.get('image', map_id).replace('.png', '').replace('.pgm', ''),
+                name=map_config.get('name', map_config.get('image', map_id).replace('.png', '').replace('.pgm', '')),
                 resolution=map_config.get('resolution', 0.1),
                 width=map_config.get('width', 0),
                 height=map_config.get('height', 0),
@@ -1655,9 +1752,14 @@ async def download_map_image(map_id: str):
 async def delete_map(map_id: str, _user: UserResponse = Depends(require_role(UserRole.admin, UserRole.operator))):
     """Delete a map by map_id"""
     
-    # Input validation - Task 6
-    if not map_id.startswith("map_") or len(map_id) != 12 or not all(c in "abcdef0123456789" for c in map_id[4:]):
-        raise HTTPException(status_code=400, detail="Invalid map_id format. Expected format: map_[a-f0-9]{8}")
+    # Input validation - accept map_ and gen_ prefixes
+    valid = False
+    for prefix in ("map_", "gen_"):
+        if map_id.startswith(prefix) and len(map_id) == len(prefix) + 8 and all(c in "abcdef0123456789" for c in map_id[len(prefix):]):
+            valid = True
+            break
+    if not valid:
+        raise HTTPException(status_code=400, detail="Invalid map_id format. Expected format: map_[a-f0-9]{8} or gen_[a-f0-9]{8}")
     
     # Get map-specific lock - Task 7
     with maps_lock:
@@ -1681,7 +1783,7 @@ async def delete_map(map_id: str, _user: UserResponse = Depends(require_role(Use
                     map_config = yaml.safe_load(f)
                 map_info = MapInfo(
                     mapId=map_id,
-                    name=map_config.get('image', map_id).replace('.png', '').replace('.pgm', ''),
+                    name=map_config.get('name', map_config.get('image', map_id).replace('.png', '').replace('.pgm', '')),
                     resolution=map_config.get('resolution', 0.1),
                     width=map_config.get('width', 0),
                     height=map_config.get('height', 0),
@@ -1990,6 +2092,9 @@ async def send_mission(mission: MissionRequest, _user: UserResponse = Depends(re
     # Add mission ID to the command message for robot tracking
     command_message.missionId = mission_id
     
+    # Track robot-to-map association for auto-park
+    robot_last_map[mission.robotId] = mission.mapId
+
     # Send to FIWARE IoT Agent
     try:
         fiware_response = await send_fiware_command(mission.robotId, command_message)
@@ -2003,7 +2108,7 @@ async def send_mission(mission: MissionRequest, _user: UserResponse = Depends(re
     except Exception as e:
         logger.error(f"Unexpected error sending mission: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Unexpected error sending mission: {str(e)}")
-    
+
     # Create mission object
     mission_obj = Mission(
         robotId=mission.robotId,

@@ -34,6 +34,7 @@ def generate_map_from_image(
     # Generate map.yaml
     yaml_data = {
         "image": "map.png",
+        "name": name,
         "resolution": resolution,
         "origin": origin if len(origin) >= 3 else [origin[0], origin[1], 0.0],
         "negate": 0,

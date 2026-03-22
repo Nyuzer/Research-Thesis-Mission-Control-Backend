@@ -168,7 +168,7 @@ export async function fetchZones(mapId: string) {
 
 export async function createZone(
   mapId: string,
-  data: { name: string; zoneType: string; polygon: number[][]; speedLimit?: number; color?: string }
+  data: { name: string; zoneType: string; polygon: number[][]; speedLimit?: number; color?: string; goalPoint?: number[]; isDefault?: boolean }
 ) {
   return fetchJSON(`/api/maps/${encodeURIComponent(mapId)}/zones`, {
     method: "POST",

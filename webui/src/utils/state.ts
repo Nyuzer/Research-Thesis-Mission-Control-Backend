@@ -8,6 +8,8 @@ export interface Zone {
   polygon: number[][];
   speedLimit?: number | null;
   color?: string | null;
+  goalPoint?: number[] | null;
+  isDefault?: boolean | null;
   createdBy?: string | null;
   createdAt: string;
 }

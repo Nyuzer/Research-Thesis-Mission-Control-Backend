@@ -10,8 +10,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   Paintbrush, Eraser, Square, Pentagon, Search, Save, Scan,
-  MousePointer, Undo2, Layers, MapPin, Gauge, ParkingSquare,
-  Wand2, Trash2,
+  MousePointer, Undo2, Redo2, Layers, MapPin, Gauge, ParkingSquare,
+  Wand2, Trash2, MousePointerClick, Pencil,
 } from "lucide-react";
 
 /* ── proj4 + CRS ── */
@@ -21,7 +21,7 @@ proj4.defs(
 );
 
 /* ── Types ── */
-type ToolMode = "pan" | "brush" | "rectangle" | "polygon" | "eraser" | "bbox";
+type ToolMode = "pan" | "brush" | "rectangle" | "polygon" | "eraser" | "pick" | "edit" | "bbox";
 type OccupancyType = "free" | "occupied" | "unknown" | "parking" | "speed_limit";
 
 interface DrawnFeature {
@@ -30,6 +30,10 @@ interface DrawnFeature {
   occupancy: OccupancyType;
   latlngs: any[] | any[][]; // L.LatLng arrays
   brushRadius?: number; // meters, for brush strokes
+  zoneName?: string;        // for parking/speed_limit zones
+  goalPoint?: [number, number]; // for parking (lat, lng on map)
+  isDefault?: boolean;      // for parking
+  zoneSpeedLimit?: number;  // for speed_limit (m/s)
 }
 
 const NRW_CENTER: [number, number] = [51.45, 7.45]; // Dortmund area
@@ -54,9 +58,94 @@ const OCCUPANCY_PIXEL: Record<OccupancyType, [number, number, number]> = {
 let _featureIdCounter = 0;
 function nextId() { return `f_${++_featureIdCounter}`; }
 
+/* ── Session persistence helpers ── */
+const SS_KEY = "mapgen_state";
+
+interface PersistedState {
+  features: { id: string; tool: string; occupancy: string; latlngs: [number, number][]; brushRadius?: number; zoneName?: string; goalPoint?: [number, number]; isDefault?: boolean; zoneSpeedLimit?: number }[];
+  bbox: { south: number; west: number; north: number; east: number } | null;
+  mapName: string;
+  resolution: string;
+  brushSize: number;
+  occupancy: string;
+  baseLayer: string;
+  mapView: { lat: number; lng: number; zoom: number };
+}
+
+function saveSession(s: PersistedState) {
+  try { sessionStorage.setItem(SS_KEY, JSON.stringify(s)); } catch {}
+}
+
+function loadSession(): PersistedState | null {
+  try {
+    const raw = sessionStorage.getItem(SS_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+}
+
+function serializeFeatures(feats: DrawnFeature[]) {
+  return feats.map((f) => ({
+    id: f.id,
+    tool: f.tool,
+    occupancy: f.occupancy,
+    latlngs: (f.latlngs as any[]).map((ll: any) => [ll.lat, ll.lng] as [number, number]),
+    brushRadius: f.brushRadius,
+    zoneName: f.zoneName,
+    goalPoint: f.goalPoint,
+    isDefault: f.isDefault,
+    zoneSpeedLimit: f.zoneSpeedLimit,
+  }));
+}
+
+function deserializeFeatures(raw: PersistedState["features"]): DrawnFeature[] {
+  return raw.map((f) => ({
+    id: f.id,
+    tool: f.tool as DrawnFeature["tool"],
+    occupancy: f.occupancy as OccupancyType,
+    latlngs: f.latlngs.map(([lat, lng]: [number, number]) => L.latLng(lat, lng)),
+    brushRadius: f.brushRadius,
+    zoneName: f.zoneName,
+    goalPoint: f.goalPoint,
+    isDefault: f.isDefault,
+    zoneSpeedLimit: f.zoneSpeedLimit,
+  }));
+}
+
+/* ── Hit-testing helpers for object picking ── */
+function pointInPolygon(px: number, py: number, pts: { x: number; y: number }[]): boolean {
+  let inside = false;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    const xi = pts[i].x, yi = pts[i].y;
+    const xj = pts[j].x, yj = pts[j].y;
+    if ((yi > py) !== (yj > py) && px < ((xj - xi) * (py - yi)) / (yj - yi) + xi) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
+
+function distToSegment(px: number, py: number, ax: number, ay: number, bx: number, by: number): number {
+  const dx = bx - ax, dy = by - ay;
+  const lenSq = dx * dx + dy * dy;
+  if (lenSq === 0) return Math.hypot(px - ax, py - ay);
+  const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / lenSq));
+  return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
+}
+
+function distToPolyline(px: number, py: number, pts: { x: number; y: number }[]): number {
+  let min = Infinity;
+  for (let i = 0; i < pts.length - 1; i++) {
+    min = Math.min(min, distToSegment(px, py, pts[i].x, pts[i].y, pts[i + 1].x, pts[i + 1].y));
+  }
+  return min;
+}
+
 /* ═══════════════════════════ COMPONENT ═══════════════════════════ */
 
 export default function MapGenPage() {
+  /* ── Restore persisted session (lazy, runs once) ── */
+  const savedRef = useRef(loadSession());
+
   /* ── Refs ── */
   const mapDivRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<any>(null);
@@ -68,19 +157,37 @@ export default function MapGenPage() {
   const featuresRef = useRef<DrawnFeature[]>([]);
 
   /* ── State ── */
+  const s = savedRef.current;
   const [tool, setTool] = useState<ToolMode>("pan");
-  const [occupancy, setOccupancy] = useState<OccupancyType>("occupied");
-  const [brushSize, setBrushSize] = useState(3); // meters
-  const [features, setFeatures] = useState<DrawnFeature[]>([]);
-  const [bbox, setBbox] = useState<any>(null);
-  const [mapName, setMapName] = useState("");
-  const [resolution, setResolution] = useState("0.05");
+  const [occupancy, setOccupancy] = useState<OccupancyType>((s?.occupancy as OccupancyType) || "occupied");
+  const [brushSize, setBrushSize] = useState(s?.brushSize ?? 3);
+  const [features, setFeatures] = useState<DrawnFeature[]>(() => s?.features ? deserializeFeatures(s.features) : []);
+  const [bbox, setBbox] = useState<any>(() => s?.bbox ? L.latLngBounds([s.bbox.south, s.bbox.west], [s.bbox.north, s.bbox.east]) : null);
+  const [mapName, setMapName] = useState(s?.mapName ?? "");
+  const [resolution, setResolution] = useState(s?.resolution ?? "0.1");
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [saving, setSaving] = useState(false);
   const [osmLoading, setOsmLoading] = useState(false);
-  const [baseLayer, setBaseLayer] = useState<"osm" | "ortho">("osm");
+  const [baseLayer, setBaseLayer] = useState<"osm" | "ortho">((s?.baseLayer as "osm" | "ortho") || "osm");
   const [polyVertexCount, setPolyVertexCount] = useState(0);
+  // Undo/redo: snapshot-based history
+  const [undoStack, setUndoStack] = useState<DrawnFeature[][]>([]);
+  const [redoStack, setRedoStack] = useState<DrawnFeature[][]>([]);
+  const [selectedFeatureId, setSelectedFeatureId] = useState<string | null>(null);
+  const [settingGoalPoint, setSettingGoalPoint] = useState(false);
+  const [editFeatureId, setEditFeatureId] = useState<string | null>(null);
+  const editFeatureIdRef = useRef<string | null>(null);
+  editFeatureIdRef.current = editFeatureId;
+  const editDragRef = useRef<{ vertexIdx: number; featureId: string } | null>(null);
+
+  // Escape key cancels goal point mode
+  useEffect(() => {
+    if (!settingGoalPoint) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setSettingGoalPoint(false); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [settingGoalPoint]);
 
   // Drawing state (not in React state for performance)
   const drawingRef = useRef(false);
@@ -183,15 +290,101 @@ export default function MapGenPage() {
     }
 
     ctx.globalCompositeOperation = "source-over";
+
+    // Draw zone name labels at centroid
+    for (const f of feats) {
+      if ((f.occupancy !== "parking" && f.occupancy !== "speed_limit") || !f.zoneName) continue;
+      let cx = 0, cy = 0, n = 0;
+      if (f.tool === "polygon") {
+        const pts = f.latlngs as any[];
+        for (const ll of pts) { const p = map.latLngToContainerPoint(ll); cx += p.x; cy += p.y; n++; }
+      } else if (f.tool === "rectangle") {
+        const corners = f.latlngs as any[];
+        const p1 = map.latLngToContainerPoint(corners[0]);
+        const p2 = map.latLngToContainerPoint(corners[1]);
+        cx = (p1.x + p2.x) / 2; cy = (p1.y + p2.y) / 2; n = 1;
+      }
+      if (n === 0) continue;
+      if (n > 1) { cx /= n; cy /= n; }
+      const color = f.occupancy === "parking" ? "#3b82f6" : "#f59e0b";
+      const prefix = f.occupancy === "parking" ? "P" : "S";
+      const defaultStar = f.isDefault ? " \u2605" : "";
+      const label = `${prefix}: ${f.zoneName}${defaultStar}`;
+      ctx.font = "bold 11px Inter, sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.strokeStyle = "#0f172a";
+      ctx.lineWidth = 3;
+      ctx.lineJoin = "round";
+      ctx.strokeText(label, cx, cy);
+      ctx.fillStyle = color;
+      ctx.fillText(label, cx, cy);
+    }
+
+    // Draw goal point markers for parking zones
+    for (const f of feats) {
+      if (f.occupancy === "parking" && f.goalPoint) {
+        const gpLL = L.latLng(f.goalPoint[0], f.goalPoint[1]);
+        const p = map.latLngToContainerPoint(gpLL);
+        if (!isFinite(p.x) || !isFinite(p.y)) continue;
+        // Green crosshair
+        ctx.strokeStyle = "#22c55e";
+        ctx.lineWidth = 2;
+        ctx.lineCap = "round";
+        ctx.beginPath(); ctx.moveTo(p.x - 8, p.y); ctx.lineTo(p.x - 3, p.y); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(p.x + 3, p.y); ctx.lineTo(p.x + 8, p.y); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(p.x, p.y - 8); ctx.lineTo(p.x, p.y - 3); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(p.x, p.y + 3); ctx.lineTo(p.x, p.y + 8); ctx.stroke();
+        ctx.fillStyle = "#22c55e";
+        ctx.beginPath(); ctx.arc(p.x, p.y, 3, 0, Math.PI * 2); ctx.fill();
+        // Label
+        ctx.font = "bold 9px Inter, sans-serif";
+        ctx.fillStyle = "#22c55e";
+        ctx.strokeStyle = "#0f172a";
+        ctx.lineWidth = 2.5;
+        ctx.textAlign = "center";
+        ctx.strokeText("GOAL", p.x, p.y - 12);
+        ctx.fillText("GOAL", p.x, p.y - 12);
+      }
+    }
+
+    // Draw vertex handles for feature being edited
+    const eid = editFeatureIdRef.current;
+    if (eid) {
+      const ef = feats.find((f) => f.id === eid);
+      if (ef) {
+        let verts: any[] = [];
+        if (ef.tool === "polygon") {
+          verts = ef.latlngs as any[];
+        } else if (ef.tool === "rectangle") {
+          const c = ef.latlngs as any[];
+          verts = [c[0], L.latLng(c[0].lat, c[1].lng), c[1], L.latLng(c[1].lat, c[0].lng)];
+        } else if (ef.tool === "brush" || ef.tool === "eraser") {
+          verts = ef.latlngs as any[];
+        }
+        for (const ll of verts) {
+          const p = map.latLngToContainerPoint(ll);
+          if (!isFinite(p.x) || !isFinite(p.y)) continue;
+          ctx.fillStyle = "#ffffff";
+          ctx.strokeStyle = "#22d3ee";
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, 5, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+        }
+      }
+    }
   }, []);
 
   /* ── Initialize Leaflet ── */
   useEffect(() => {
     if (!mapDivRef.current || mapRef.current) return;
 
+    const sv = savedRef.current?.mapView;
     const map = L.map(mapDivRef.current, {
-      center: NRW_CENTER,
-      zoom: NRW_ZOOM,
+      center: sv ? [sv.lat, sv.lng] : NRW_CENTER,
+      zoom: sv?.zoom ?? NRW_ZOOM,
       zoomControl: true,
     });
 
@@ -266,6 +459,37 @@ export default function MapGenPage() {
     renderCanvas();
   }, [features, renderCanvas]);
 
+  /* ── Persist state to sessionStorage ── */
+  useEffect(() => {
+    const map = mapRef.current;
+    const center = map?.getCenter();
+    const zoom = map?.getZoom();
+    saveSession({
+      features: serializeFeatures(features),
+      bbox: bbox ? { south: bbox.getSouth(), west: bbox.getWest(), north: bbox.getNorth(), east: bbox.getEast() } : null,
+      mapName,
+      resolution,
+      brushSize,
+      occupancy,
+      baseLayer,
+      mapView: center ? { lat: center.lat, lng: center.lng, zoom: zoom ?? NRW_ZOOM } : { lat: NRW_CENTER[0], lng: NRW_CENTER[1], zoom: NRW_ZOOM },
+    });
+  }, [features, bbox, mapName, resolution, brushSize, occupancy, baseLayer]);
+
+  /* ── Persist map view on move/zoom ── */
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const persist = () => {
+      const c = map.getCenter();
+      const prev = loadSession();
+      if (prev) { prev.mapView = { lat: c.lat, lng: c.lng, zoom: map.getZoom() }; saveSession(prev); }
+    };
+    map.on("moveend", persist);
+    map.on("zoomend", persist);
+    return () => { map.off("moveend", persist); map.off("zoomend", persist); };
+  }, []);
+
   /* ── Switch base layer ── */
   useEffect(() => {
     const map = mapRef.current;
@@ -309,6 +533,8 @@ export default function MapGenPage() {
       rectangle: "crosshair",
       polygon: "crosshair",
       eraser: "crosshair",
+      pick: "pointer",
+      edit: "pointer",
       bbox: "crosshair",
     };
     el.style.cursor = cursors[tool] || "default";
@@ -318,7 +544,7 @@ export default function MapGenPage() {
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
-    if (tool === "pan") {
+    if (tool === "pan" || tool === "pick" || tool === "edit") {
       map.dragging.enable();
       map.doubleClickZoom.enable();
     } else {
@@ -326,6 +552,26 @@ export default function MapGenPage() {
       map.doubleClickZoom.disable();
     }
   }, [tool]);
+
+  // Push current state to undo stack before any mutation
+  const pushUndo = useCallback(() => {
+    setUndoStack((us) => [...us.slice(-50), featuresRef.current]);
+    setRedoStack([]);
+  }, []);
+
+  // Add/modify features (used for drawing new shapes)
+  const addFeatures = useCallback((fn: (prev: DrawnFeature[]) => DrawnFeature[]) => {
+    pushUndo();
+    setFeatures(fn);
+  }, [pushUndo]);
+
+  // Remove a feature by index
+  const removeFeature = useCallback((idx: number) => {
+    const feats = featuresRef.current;
+    if (idx < 0 || idx >= feats.length) return;
+    pushUndo();
+    setFeatures(feats.filter((_, i) => i !== idx));
+  }, [pushUndo]);
 
   /* ── Map mouse events for drawing ── */
   useEffect(() => {
@@ -341,6 +587,32 @@ export default function MapGenPage() {
 
     function onMouseDown(e: any) {
       if (tool === "pan") return;
+
+      // Edit mode: start dragging a vertex
+      if (tool === "edit" && editFeatureIdRef.current) {
+        const clickPx = map.latLngToContainerPoint(e.latlng);
+        const ef = featuresRef.current.find((f) => f.id === editFeatureIdRef.current);
+        if (ef) {
+          let verts: any[] = [];
+          if (ef.tool === "polygon") verts = ef.latlngs as any[];
+          else if (ef.tool === "rectangle") {
+            const c = ef.latlngs as any[];
+            verts = [c[0], c[1]]; // only the 2 corner points are editable
+          } else if (ef.tool === "brush" || ef.tool === "eraser") verts = ef.latlngs as any[];
+
+          for (let i = 0; i < verts.length; i++) {
+            const vPx = map.latLngToContainerPoint(verts[i]);
+            if (Math.hypot(clickPx.x - vPx.x, clickPx.y - vPx.y) <= 8) {
+              editDragRef.current = { vertexIdx: i, featureId: ef.id };
+              pushUndo();
+              map.dragging.disable();
+              e.originalEvent?.preventDefault?.();
+              return;
+            }
+          }
+        }
+      }
+
       if (tool === "brush" || tool === "eraser") {
         drawingRef.current = true;
         currentStrokeRef.current = [e.latlng];
@@ -351,6 +623,21 @@ export default function MapGenPage() {
     }
 
     function onMouseMove(e: any) {
+      // Edit mode: drag vertex
+      if (editDragRef.current) {
+        const { vertexIdx, featureId } = editDragRef.current;
+        const feats = featuresRef.current;
+        const updated = feats.map((f) => {
+          if (f.id !== featureId) return f;
+          const newLatlngs = [...(f.latlngs as any[])];
+          newLatlngs[vertexIdx] = e.latlng;
+          return { ...f, latlngs: newLatlngs };
+        });
+        featuresRef.current = updated;
+        renderCanvas();
+        return;
+      }
+
       // Brush/eraser cursor circle
       if (tool === "brush" || tool === "eraser") {
         if (cursorCircleRef.current) map.removeLayer(cursorCircleRef.current);
@@ -432,6 +719,23 @@ export default function MapGenPage() {
     }
 
     function onMouseUp(e: any) {
+      // Finalize vertex drag
+      if (editDragRef.current) {
+        const { vertexIdx, featureId } = editDragRef.current;
+        editDragRef.current = null;
+        map.dragging.enable();
+        // Commit the updated latlngs to React state
+        setFeatures((prev) =>
+          prev.map((f) => {
+            if (f.id !== featureId) return f;
+            const newLatlngs = [...(f.latlngs as any[])];
+            newLatlngs[vertexIdx] = e.latlng;
+            return { ...f, latlngs: newLatlngs };
+          })
+        );
+        return;
+      }
+
       if (!drawingRef.current) return;
       drawingRef.current = false;
       if (tempLayerRef.current && tool !== "polygon") {
@@ -444,7 +748,7 @@ export default function MapGenPage() {
         if (pts.length > 0) {
           const occ = tool === "eraser" ? "unknown" : occupancy;
           const featureTool = tool === "eraser" ? "eraser" as const : "brush" as const;
-          setFeatures((prev) => [
+          addFeatures((prev) => [
             ...prev,
             { id: nextId(), tool: featureTool, occupancy: occ, latlngs: [...pts], brushRadius: brushSize },
           ]);
@@ -453,7 +757,7 @@ export default function MapGenPage() {
       } else if (tool === "rectangle") {
         const start = currentStrokeRef.current[0];
         if (start) {
-          setFeatures((prev) => [
+          addFeatures((prev) => [
             ...prev,
             { id: nextId(), tool: "rectangle", occupancy, latlngs: [start, e.latlng] },
           ]);
@@ -470,6 +774,96 @@ export default function MapGenPage() {
     }
 
     function onClick(e: any) {
+      // ── Goal point placement mode ──
+      if (settingGoalPoint && selectedFeatureId) {
+        const ll = e.latlng;
+        setFeatures((prev) =>
+          prev.map((f) =>
+            f.id === selectedFeatureId ? { ...f, goalPoint: [ll.lat, ll.lng] as [number, number] } : f
+          )
+        );
+        setSettingGoalPoint(false);
+        renderCanvas();
+        return;
+      }
+
+      // ── Edit mode: click to select feature for vertex editing ──
+      if (tool === "edit") {
+        const clickPx = map.latLngToContainerPoint(e.latlng);
+        const feats = featuresRef.current;
+        const mpp = getMetersPerPixel();
+        // Walk backwards: topmost first
+        for (let i = feats.length - 1; i >= 0; i--) {
+          const f = feats[i];
+          let hit = false;
+          if (f.tool === "polygon") {
+            const pts = (f.latlngs as any[]).map((ll: any) => map.latLngToContainerPoint(ll));
+            hit = pointInPolygon(clickPx.x, clickPx.y, pts);
+          } else if (f.tool === "brush" || f.tool === "eraser") {
+            const pts = (f.latlngs as any[]).map((ll: any) => map.latLngToContainerPoint(ll));
+            const radiusPx = (f.brushRadius || 3) / mpp;
+            const dist = pts.length === 1
+              ? Math.hypot(clickPx.x - pts[0].x, clickPx.y - pts[0].y)
+              : distToPolyline(clickPx.x, clickPx.y, pts);
+            hit = dist <= radiusPx + 4;
+          } else if (f.tool === "rectangle") {
+            const corners = f.latlngs as any[];
+            const p1 = map.latLngToContainerPoint(corners[0]);
+            const p2 = map.latLngToContainerPoint(corners[1]);
+            hit = clickPx.x >= Math.min(p1.x, p2.x) && clickPx.x <= Math.max(p1.x, p2.x) &&
+                  clickPx.y >= Math.min(p1.y, p2.y) && clickPx.y <= Math.max(p1.y, p2.y);
+          }
+          if (hit) {
+            setEditFeatureId(f.id);
+            renderCanvas();
+            return;
+          }
+        }
+        // Clicked on empty space — deselect
+        setEditFeatureId(null);
+        renderCanvas();
+        return;
+      }
+
+      // ── Object picker: click to delete a feature ──
+      if (tool === "pick") {
+        const clickPx = map.latLngToContainerPoint(e.latlng);
+        const feats = featuresRef.current;
+        const mpp = getMetersPerPixel();
+        // Walk backwards so topmost (last drawn) feature is picked first
+        for (let i = feats.length - 1; i >= 0; i--) {
+          const f = feats[i];
+          if (f.tool === "polygon") {
+            const pts = (f.latlngs as any[]).map((ll: any) => map.latLngToContainerPoint(ll));
+            if (pointInPolygon(clickPx.x, clickPx.y, pts)) {
+              removeFeature(i);
+              return;
+            }
+          } else if (f.tool === "brush" || f.tool === "eraser") {
+            const pts = (f.latlngs as any[]).map((ll: any) => map.latLngToContainerPoint(ll));
+            const radiusPx = (f.brushRadius || 3) / mpp;
+            const dist = pts.length === 1
+              ? Math.hypot(clickPx.x - pts[0].x, clickPx.y - pts[0].y)
+              : distToPolyline(clickPx.x, clickPx.y, pts);
+            if (dist <= radiusPx + 4) {
+              removeFeature(i);
+              return;
+            }
+          } else if (f.tool === "rectangle") {
+            const corners = f.latlngs as any[];
+            const p1 = map.latLngToContainerPoint(corners[0]);
+            const p2 = map.latLngToContainerPoint(corners[1]);
+            const minX = Math.min(p1.x, p2.x), maxX = Math.max(p1.x, p2.x);
+            const minY = Math.min(p1.y, p2.y), maxY = Math.max(p1.y, p2.y);
+            if (clickPx.x >= minX && clickPx.x <= maxX && clickPx.y >= minY && clickPx.y <= maxY) {
+              removeFeature(i);
+              return;
+            }
+          }
+        }
+        return;
+      }
+
       if (tool !== "polygon") return;
 
       const verts = polyVerticesRef.current;
@@ -479,10 +873,10 @@ export default function MapGenPage() {
         const firstPx = map.latLngToContainerPoint(verts[0]);
         const clickPx = map.latLngToContainerPoint(e.latlng);
         if (firstPx.distanceTo(clickPx) < SNAP_DIST_PX) {
-          // Copy latlngs BEFORE clearing — setFeatures callback runs async
+          // Copy latlngs BEFORE clearing — addFeatures callback runs async
           const latlngs = [...verts];
           verts.length = 0;
-          setFeatures((prev) => [
+          addFeatures((prev) => [
             ...prev,
             { id: nextId(), tool: "polygon", occupancy, latlngs },
           ]);
@@ -523,7 +917,7 @@ export default function MapGenPage() {
       if (cursorCircleRef.current) { map.removeLayer(cursorCircleRef.current); cursorCircleRef.current = null; }
       cleanupPolyPreview();
     };
-  }, [tool, occupancy, brushSize]);
+  }, [tool, occupancy, brushSize, addFeatures, pushUndo, settingGoalPoint, selectedFeatureId, editFeatureId]);
 
   /* ── Geocoding search (Nominatim) ── */
   const searchTimeoutRef = useRef<any>(null);
@@ -555,7 +949,7 @@ export default function MapGenPage() {
     setSearchQuery(r.display_name.split(",").slice(0, 2).join(","));
   };
 
-  /* ── Undo ── */
+  /* ── Undo / Redo ── */
   const undo = () => {
     // If placing polygon vertices, undo removes last vertex
     if (tool === "polygon" && polyVerticesRef.current.length > 0) {
@@ -565,15 +959,27 @@ export default function MapGenPage() {
       if (map) {
         if (tempLayerRef.current) { map.removeLayer(tempLayerRef.current); tempLayerRef.current = null; }
         if (firstVertexMarkerRef.current) { map.removeLayer(firstVertexMarkerRef.current); firstVertexMarkerRef.current = null; }
-        // Preview will be redrawn on next mousemove
       }
       return;
     }
-    setFeatures((prev) => prev.slice(0, -1));
+    if (undoStack.length === 0) return;
+    const prevState = undoStack[undoStack.length - 1];
+    setUndoStack((us) => us.slice(0, -1));
+    setRedoStack((rs) => [...rs, featuresRef.current]);
+    setFeatures(prevState);
+  };
+
+  const redo = () => {
+    if (redoStack.length === 0) return;
+    const nextState = redoStack[redoStack.length - 1];
+    setRedoStack((rs) => rs.slice(0, -1));
+    setUndoStack((us) => [...us, featuresRef.current]);
+    setFeatures(nextState);
   };
 
   /* ── Clear all ── */
   const clearAll = () => {
+    pushUndo();
     setFeatures([]);
     polyVerticesRef.current = [];
     setPolyVertexCount(0);
@@ -591,7 +997,7 @@ export default function MapGenPage() {
 
     setSaving(true);
     try {
-      const res = parseFloat(resolution) || 0.05;
+      const res = parseFloat(resolution) || 0.1;
 
       // Convert bbox to EPSG:25832
       const sw = bbox.getSouthWest();
@@ -690,6 +1096,49 @@ export default function MapGenPage() {
       const dataUrl = canvas.toDataURL("image/png");
       const base64 = dataUrl.split(",")[1];
 
+      // Collect zone features (parking/speed_limit) and convert polygons to EPSG:25832
+      const zones: any[] = [];
+      for (const f of features) {
+        if (f.occupancy !== "parking" && f.occupancy !== "speed_limit") continue;
+        if (f.tool !== "polygon" && f.tool !== "rectangle") continue;
+        let polyCoords: number[][] = [];
+        if (f.tool === "polygon") {
+          polyCoords = (f.latlngs as any[]).map((ll: any) => {
+            const [x, y] = proj4("EPSG:4326", "EPSG:25832", [ll.lng, ll.lat]);
+            return [x, y];
+          });
+        } else if (f.tool === "rectangle") {
+          const c = f.latlngs as any[];
+          const sw2 = c[0], ne2 = c[1];
+          const corners = [
+            [sw2.lng, sw2.lat], [ne2.lng, sw2.lat],
+            [ne2.lng, ne2.lat], [sw2.lng, ne2.lat],
+          ];
+          polyCoords = corners.map(([lng, lat]) => {
+            const [x, y] = proj4("EPSG:4326", "EPSG:25832", [lng, lat]);
+            return [x, y];
+          });
+        }
+        if (polyCoords.length < 3) continue;
+
+        const zoneEntry: any = {
+          name: f.zoneName || `Zone ${f.id}`,
+          zoneType: f.occupancy,
+          polygon: polyCoords,
+        };
+        if (f.occupancy === "parking") {
+          if (f.goalPoint) {
+            const [gpX, gpY] = proj4("EPSG:4326", "EPSG:25832", [f.goalPoint[1], f.goalPoint[0]]);
+            zoneEntry.goalPoint = [gpX, gpY];
+          }
+          zoneEntry.isDefault = f.isDefault || false;
+        }
+        if (f.occupancy === "speed_limit") {
+          zoneEntry.speedLimit = f.zoneSpeedLimit || 0.5;
+        }
+        zones.push(zoneEntry);
+      }
+
       await fetchJSON("/api/mapgen/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -698,10 +1147,12 @@ export default function MapGenPage() {
           resolution: res,
           origin: [swX, swY, 0],
           imageData: base64,
+          zones,
         }),
       });
 
-      showToast(`Map "${mapName}" saved! (${widthPx}x${heightPx}px)`, "success");
+      const zoneMsg = zones.length > 0 ? `, ${zones.length} zone(s)` : "";
+      showToast(`Map "${mapName}" saved! (${widthPx}x${heightPx}px${zoneMsg})`, "success");
     } catch (e: any) {
       showToast(e?.message || "Export failed", "error");
     } finally {
@@ -727,11 +1178,11 @@ export default function MapGenPage() {
 
       const newFeatures: DrawnFeature[] = [];
 
-      // First fill the whole bbox as "free" (roads/walkable)
+      // First fill the whole bbox as "unknown" – roads and buildings will be drawn on top
       newFeatures.push({
         id: nextId(),
         tool: "rectangle",
-        occupancy: "free",
+        occupancy: "unknown",
         latlngs: [
           L.latLng(sw.lat, sw.lng),
           L.latLng(ne.lat, ne.lng),
@@ -744,7 +1195,19 @@ export default function MapGenPage() {
           const geomType = feat.geometry?.type;
           const occ = feat.properties?.occupancy as OccupancyType || "occupied";
 
-          if (geomType === "Polygon" && feat.geometry.coordinates?.length > 0) {
+          if (geomType === "LineString" && feat.geometry.coordinates?.length >= 2) {
+            // Roads: render as brush strokes with proper width
+            const coords = feat.geometry.coordinates;
+            const latlngs = coords.map((c: number[]) => L.latLng(c[1], c[0]));
+            const width = feat.properties?.width || 4;
+            newFeatures.push({
+              id: nextId(),
+              tool: "brush",
+              occupancy: occ,
+              latlngs,
+              brushRadius: width / 2,
+            });
+          } else if (geomType === "Polygon" && feat.geometry.coordinates?.length > 0) {
             const ring = feat.geometry.coordinates[0];
             const latlngs = ring.map((c: number[]) => L.latLng(c[1], c[0]));
             if (latlngs.length >= 3) {
@@ -759,7 +1222,7 @@ export default function MapGenPage() {
         }
       }
 
-      setFeatures((prev) => [...prev, ...newFeatures]);
+      addFeatures((prev) => [...prev, ...newFeatures]);
       showToast(`Added ${newFeatures.length} features from OSM`, "success");
     } catch (e: any) {
       showToast(e?.message || "OSM auto-fill failed", "error");
@@ -776,7 +1239,7 @@ export default function MapGenPage() {
     const [neX, neY] = proj4("EPSG:4326", "EPSG:25832", [ne.lng, ne.lat]);
     const w = Math.abs(neX - swX);
     const h = Math.abs(neY - swY);
-    const res = parseFloat(resolution) || 0.05;
+    const res = parseFloat(resolution) || 0.1;
     return { w: w.toFixed(0), h: h.toFixed(0), px: Math.ceil(w / res), py: Math.ceil(h / res) };
   })() : null;
 
@@ -806,10 +1269,12 @@ export default function MapGenPage() {
             { t: "rectangle" as ToolMode, icon: Square, label: "Rectangle" },
             { t: "polygon" as ToolMode, icon: Pentagon, label: "Polygon" },
             { t: "eraser" as ToolMode, icon: Eraser, label: "Eraser" },
+            { t: "edit" as ToolMode, icon: Pencil, label: "Edit Vertices" },
+            { t: "pick" as ToolMode, icon: MousePointerClick, label: "Delete Object" },
           ]).map(({ t, icon: Icon, label }) => (
             <button
               key={t}
-              onClick={() => setTool(t)}
+              onClick={() => { setTool(t); if (t !== "edit") setEditFeatureId(null); }}
               className={`w-full text-left px-2.5 py-1.5 rounded-md text-xs flex items-center gap-2 transition-colors ${
                 tool === t
                   ? "bg-primary/15 text-primary font-medium"
@@ -861,18 +1326,125 @@ export default function MapGenPage() {
           ))}
         </div>
 
-        {/* Undo / Clear */}
+        {/* Zone features list */}
+        {(() => {
+          const zoneFeatures = features.filter((f) => f.occupancy === "parking" || f.occupancy === "speed_limit");
+          if (zoneFeatures.length === 0) return null;
+          return (
+            <div className="space-y-1.5 border-t border-border pt-3">
+              <Label className="text-[10px] text-muted-foreground uppercase tracking-wider">Zone Metadata</Label>
+              <div className="space-y-2 max-h-52 overflow-y-auto">
+                {zoneFeatures.map((zf) => (
+                  <div
+                    key={zf.id}
+                    className={`rounded-md border p-2 space-y-1.5 text-xs ${
+                      selectedFeatureId === zf.id ? "border-primary bg-primary/5" : "border-border bg-secondary/20"
+                    }`}
+                    onClick={() => setSelectedFeatureId(zf.id)}
+                  >
+                    <div className="flex items-center gap-1">
+                      <div className="w-2.5 h-2.5 rounded" style={{ backgroundColor: zf.occupancy === "parking" ? "#3b82f6" : "#f59e0b" }} />
+                      <span className="text-muted-foreground">{zf.occupancy === "parking" ? "P" : "S"}</span>
+                    </div>
+                    <Input
+                      placeholder="Zone name"
+                      value={zf.zoneName || ""}
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setFeatures((prev) => prev.map((f) => f.id === zf.id ? { ...f, zoneName: val } : f));
+                      }}
+                      className="h-6 text-xs"
+                    />
+                    {zf.occupancy === "parking" && (
+                      <>
+                        <label className="flex items-center gap-1.5 text-[10px] text-muted-foreground cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={zf.isDefault || false}
+                            onChange={(e) => {
+                              const checked = e.target.checked;
+                              setFeatures((prev) => prev.map((f) => {
+                                if (f.id === zf.id) return { ...f, isDefault: checked };
+                                // Only one default
+                                if (checked && f.occupancy === "parking") return { ...f, isDefault: false };
+                                return f;
+                              }));
+                            }}
+                          />
+                          Default parking
+                        </label>
+                        <Button
+                          size="sm"
+                          variant={settingGoalPoint && selectedFeatureId === zf.id ? "default" : "outline"}
+                          className="w-full text-[10px] h-6"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (settingGoalPoint && selectedFeatureId === zf.id) {
+                              setSettingGoalPoint(false);
+                            } else {
+                              setSelectedFeatureId(zf.id);
+                              setSettingGoalPoint(true);
+                            }
+                          }}
+                        >
+                          <MapPin className="h-3 w-3 mr-1" />
+                          {settingGoalPoint && selectedFeatureId === zf.id
+                            ? "Cancel"
+                            : zf.goalPoint ? "Move goal point" : "Set goal point"}
+                        </Button>
+                        {zf.goalPoint && (
+                          <p className="text-[9px] text-green-500">Goal: {(() => { const [x, y] = proj4("EPSG:4326", "EPSG:25832", [zf.goalPoint[1], zf.goalPoint[0]]); return `${x.toFixed(1)}, ${y.toFixed(1)}`; })()}</p>
+                        )}
+                      </>
+                    )}
+                    {zf.occupancy === "speed_limit" && (
+                      <div className="flex items-center gap-1">
+                        <span className="text-[10px] text-muted-foreground shrink-0">Speed:</span>
+                        <Input
+                          type="number"
+                          step="0.1"
+                          placeholder="0.5"
+                          value={zf.zoneSpeedLimit ?? ""}
+                          onClick={(e) => e.stopPropagation()}
+                          onChange={(e) => {
+                            const val = parseFloat(e.target.value) || undefined;
+                            setFeatures((prev) => prev.map((f) => f.id === zf.id ? { ...f, zoneSpeedLimit: val } : f));
+                          }}
+                          className="h-6 text-xs flex-1"
+                        />
+                        <span className="text-[10px] text-muted-foreground">m/s</span>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })()}
+
+        {settingGoalPoint && (
+          <div className="bg-green-500/10 border border-green-500/30 rounded-md p-2 text-xs text-green-400 flex items-center justify-between">
+            <span>Click on the map to set goal point</span>
+            <button onClick={() => setSettingGoalPoint(false)} className="text-green-300 hover:text-white ml-2 font-bold">✕</button>
+          </div>
+        )}
+
+        {/* Undo / Redo / Clear */}
         <div className="flex gap-1">
-          <Button size="sm" variant="outline" className="flex-1 text-xs h-7" onClick={undo} disabled={features.length === 0 && polyVertexCount === 0}>
+          <Button size="sm" variant="outline" className="flex-1 text-xs h-7" onClick={undo} disabled={undoStack.length === 0 && polyVertexCount === 0}>
             <Undo2 className="h-3 w-3 mr-1" /> Undo
           </Button>
-          <Button size="sm" variant="outline" className="flex-1 text-xs h-7 text-red-400" onClick={clearAll} disabled={features.length === 0 && polyVertexCount === 0}>
-            <Trash2 className="h-3 w-3 mr-1" /> Clear
+          <Button size="sm" variant="outline" className="flex-1 text-xs h-7" onClick={redo} disabled={redoStack.length === 0}>
+            <Redo2 className="h-3 w-3 mr-1" /> Redo
           </Button>
         </div>
+        <Button size="sm" variant="outline" className="w-full text-xs h-7 text-red-400" onClick={clearAll} disabled={features.length === 0 && polyVertexCount === 0}>
+          <Trash2 className="h-3 w-3 mr-1" /> Clear All
+        </Button>
 
         <p className="text-[10px] text-muted-foreground">
-          {features.length} feature{features.length !== 1 ? "s" : ""} drawn
+          {features.length} object{features.length !== 1 ? "s" : ""}
           {polyVertexCount > 0 && ` | ${polyVertexCount} vertices`}
         </p>
       </div>
@@ -918,7 +1490,10 @@ export default function MapGenPage() {
         {/* Bbox info */}
         {bboxInfo ? (
           <div className="bg-secondary/30 rounded-lg p-2 text-xs space-y-0.5">
-            <p className="text-muted-foreground">Bounding Box:</p>
+            <div className="flex items-center justify-between">
+              <p className="text-muted-foreground">Bounding Box:</p>
+              <button onClick={() => setBbox(null)} className="text-red-400 hover:text-red-300 text-[10px]">✕ Remove</button>
+            </div>
             <p className="text-foreground">{bboxInfo.w} x {bboxInfo.h} m</p>
             <p className="text-foreground">{bboxInfo.px} x {bboxInfo.py} px</p>
           </div>
