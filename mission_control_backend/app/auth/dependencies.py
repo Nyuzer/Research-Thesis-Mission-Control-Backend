@@ -1,16 +1,21 @@
-from fastapi import Depends, HTTPException, status
+import os
+from fastapi import Depends, HTTPException, status, Header
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import JWTError
 from .jwt_handler import decode_token
 from .database import users_collection
 from .models import UserResponse, UserRole
 
-security = HTTPBearer()
+security = HTTPBearer(auto_error=False)
+
+ROBOT_API_KEY = os.getenv("ROBOT_API_KEY", "")
 
 
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security),
 ) -> UserResponse:
+    if credentials is None:
+        raise HTTPException(status_code=401, detail="Not authenticated")
     token = credentials.credentials
     try:
         payload = decode_token(token)
@@ -50,3 +55,23 @@ def require_role(*roles: UserRole):
             )
         return current_user
     return role_checker
+
+
+async def get_robot_or_user(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    x_robot_api_key: str = Header(None),
+) -> UserResponse:
+    """Accept either a Robot API Key or a JWT token."""
+    # Check robot API key first
+    if x_robot_api_key and ROBOT_API_KEY and x_robot_api_key == ROBOT_API_KEY:
+        return UserResponse(
+            id="robot-service",
+            email="robot@internal",
+            username="robot",
+            role=UserRole.admin,
+            created_at="",
+            last_login=None,
+            is_active=True,
+        )
+    # Fall back to JWT
+    return await get_current_user(credentials)

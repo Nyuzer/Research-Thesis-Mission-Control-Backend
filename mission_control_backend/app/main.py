@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.auth.router import router as auth_router
 from app.auth.bootstrap import create_default_admin
-from app.auth.dependencies import get_current_user, require_role
+from app.auth.dependencies import get_current_user, require_role, get_robot_or_user
 from app.auth.models import UserResponse, UserRole
 from app.statistics.router import router as statistics_router
 from app.zones.router import router as zones_router
@@ -1684,7 +1684,7 @@ async def get_map_info(map_id: str, _user: UserResponse = Depends(get_current_us
             raise HTTPException(status_code=500, detail=f"Error reading map.yaml: {str(e)}")
 
 @app.get("/api/maps/{map_id}/files")
-async def get_map_files_info(map_id: str, _user: UserResponse = Depends(get_current_user)):
+async def get_map_files_info(map_id: str, _user: UserResponse = Depends(get_robot_or_user)):
     """Get map files information and download links for robots"""
     map_dir = f"maps/{map_id}"
     yaml_path = f"{map_dir}/map.yaml"
@@ -2162,7 +2162,7 @@ async def get_mission(mission_id: str, _user: UserResponse = Depends(get_current
 
 
 @app.patch("/api/missions/{mission_id}/status")
-async def unified_update_mission_status(mission_id: str, update: dict = Body(...), _user: UserResponse = Depends(require_role(UserRole.admin, UserRole.operator))):
+async def unified_update_mission_status(mission_id: str, update: dict = Body(...), _user: UserResponse = Depends(get_robot_or_user)):
     """
     Unified status update endpoint for both regular and scheduled missions.
     Example payload:

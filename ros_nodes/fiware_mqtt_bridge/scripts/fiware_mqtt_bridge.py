@@ -70,6 +70,9 @@ class FiwareMqttBridge:
         # Map management
         self.backend_url = self.config.get('maps', {}).get('backend_url', 'http://localhost:8000/api/maps')
         self.local_maps_path = self.config.get('maps', {}).get('local_path', '/tmp/fiware_maps')
+
+        # Robot API Key for backend authentication (from environment variable)
+        self.robot_api_key = os.environ.get('ROBOT_API_KEY', '')
         
         # Ensure local maps directory exists
         os.makedirs(self.local_maps_path, exist_ok=True)
@@ -540,7 +543,10 @@ class FiwareMqttBridge:
             files_url = f"{self.backend_url}/{map_id}/files"
             rospy.loginfo(f"Requesting map files from: {files_url}")
             
-            response = requests.get(files_url, timeout=10)
+            headers = {}
+            if self.robot_api_key:
+                headers['X-Robot-API-Key'] = self.robot_api_key
+            response = requests.get(files_url, headers=headers, timeout=10)
             response.raise_for_status()
             
             map_info = response.json()
@@ -563,7 +569,10 @@ class FiwareMqttBridge:
             image_path = os.path.join(map_dir, image_filename)
             
             rospy.loginfo(f"Downloading image from: {image_url}")
-            urllib.request.urlretrieve(image_url, image_path)
+            img_resp = requests.get(image_url, headers=headers, timeout=30)
+            img_resp.raise_for_status()
+            with open(image_path, 'wb') as img_f:
+                img_f.write(img_resp.content)
             
             rospy.loginfo(f"Image file saved to: {image_path}")
             
@@ -1299,7 +1308,10 @@ class FiwareMqttBridge:
         if error_message:
             payload["errorMessage"] = error_message
         try:
-            resp = requests.patch(url, json=payload, timeout=5)
+            headers = {}
+            if self.robot_api_key:
+                headers['X-Robot-API-Key'] = self.robot_api_key
+            resp = requests.patch(url, json=payload, headers=headers, timeout=5)
             resp.raise_for_status()
             rospy.loginfo(f"Mission status updated in backend: {mission_id} -> {status}")
         except Exception as e:

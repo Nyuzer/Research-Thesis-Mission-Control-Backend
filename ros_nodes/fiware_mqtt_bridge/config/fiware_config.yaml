@@ -75,7 +75,7 @@ state:
   # Position simulation (for testing without GPS)
   simulation:
     enabled: true # Set to FALSE for GPS mode - enables odom_callback updates
-    initial_position: [80.0, 17.0, 0.0] # x, y, theta (only used when enabled=true)
+    initial_position: [392920.23, 5707222.46, 0.0] # x, y, theta in EPSG:25832 (only used when enabled=true)
     # NOTE: When simulation=false, position comes from /odom topic automatically
     # GPS localization publishes /odom → fiware_mqtt_bridge receives it → reports to FIWARE
 
