@@ -52,3 +52,5 @@ catkin_ws/
 logs/
 MANUAL.md
 professor_robot_catkin_backup/
+
+mission_control_backend/maps/*

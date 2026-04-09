@@ -785,12 +785,22 @@ class FiwareMqttBridge:
         """Handle STOP command - cancel current navigation"""
         try:
             rospy.loginfo("🛑 Received STOP command")
-            
+
             # Cancel any active navigation goals
             if self.move_base_client:
                 self.move_base_client.cancel_all_goals()
                 rospy.loginfo("Navigation goals cancelled")
-            
+
+            # Update mission status in backend before clearing state
+            if self.current_mission and 'missionId' in self.current_mission:
+                import pytz
+                completed_time = datetime.now(pytz.timezone("Europe/Berlin")).isoformat()
+                self.update_mission_status_backend(
+                    self.current_mission['missionId'],
+                    "cancelled",
+                    completed_time=completed_time
+                )
+
             # Transition to idle state
             self.transition_state(RobotState.IDLE, "Mission stopped by user command")
             
