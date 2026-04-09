@@ -32,10 +32,6 @@ type SelectionState = {
     occupiedThresh: number;
     negate: number;
     imageUrl: string;
-    freeValue?: number;
-    occupiedValue?: number;
-    unknownValue?: number;
-    valueTolerance?: number;
   } | null;
   zones: Zone[];
   showZones: boolean;

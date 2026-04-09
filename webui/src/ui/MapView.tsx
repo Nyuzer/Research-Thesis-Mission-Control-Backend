@@ -142,7 +142,7 @@ function ZonePolygon({
   return (
     <g>
       <path d={pathD} fill={fill} stroke={stroke} strokeWidth="2" strokeDasharray={zoneType === "speed_limit" ? "6 3" : "none"} />
-      <text x={cx} y={cy} textAnchor="middle" dominantBaseline="central" fill={stroke} fontSize="10" fontWeight="700" paintOrder="stroke" stroke="#0f172a" strokeWidth="2.5" strokeLinejoin="round" fontFamily="Inter, sans-serif">
+      <text x={cx} y={cy} textAnchor="middle" dominantBaseline="central" fill={stroke} fontSize="13" fontWeight="700" paintOrder="stroke" stroke="#0f172a" strokeWidth="2.5" strokeLinejoin="round" fontFamily="Inter, sans-serif">
         {label}
       </text>
       {gpValid && (
@@ -246,22 +246,6 @@ export default function MapView() {
         const originY = Number(originArr[1] || 0);
         const freeThresh = Number(config.free_thresh ?? 0.196);
         const occupiedThresh = Number(config.occupied_thresh ?? 0.65);
-        const freeValue =
-          config.free_value !== undefined
-            ? Number(config.free_value)
-            : undefined;
-        const occupiedValue =
-          config.occupied_value !== undefined
-            ? Number(config.occupied_value)
-            : undefined;
-        const unknownValue =
-          config.unknown_value !== undefined
-            ? Number(config.unknown_value)
-            : undefined;
-        const valueTolerance =
-          config.value_tolerance !== undefined
-            ? Number(config.value_tolerance)
-            : 10;
         const negate = Number(config.negate ?? 0);
 
         const absUrl = imageUrl.startsWith("http")
@@ -283,10 +267,6 @@ export default function MapView() {
             occupiedThresh,
             negate,
             imageUrl: absUrl,
-            freeValue,
-            occupiedValue,
-            unknownValue,
-            valueTolerance,
           });
           setImgSrc(absUrl);
           if (!offscreenCanvasRef.current) {
@@ -363,18 +343,14 @@ export default function MapView() {
         const r = d[0],
           g = d[1],
           b = d[2];
-        let byteVal = Math.round(0.299 * r + 0.587 * g + 0.114 * b);
-        if (meta.negate === 1) byteVal = 255 - byteVal;
-        const freeV = meta.freeValue ?? 0;
-        const occV = meta.occupiedValue ?? 100;
-        const unkV = meta.unknownValue ?? 255;
-        const tol = meta.valueTolerance ?? 10;
-        const near = (a: number, b: number) => Math.abs(a - b) <= tol;
-        const isFree = near(byteVal, freeV);
-        const isOccupied = near(byteVal, occV);
-        const isUnknown = near(byteVal, unkV);
-        if (!isFree || isOccupied || isUnknown) {
-          showToast("Selected point is not free (byte-based)", "warning");
+        // Compute occupancy the same way map_server trinary mode does
+        const byteVal = Math.round(0.299 * r + 0.587 * g + 0.114 * b);
+        const occ = meta.negate === 1
+          ? byteVal / 255
+          : (255 - byteVal) / 255;
+        const freeThresh = meta.freeThresh ?? 0.196;
+        if (occ >= freeThresh) {
+          showToast("Selected point is not free", "warning");
           return;
         }
       }

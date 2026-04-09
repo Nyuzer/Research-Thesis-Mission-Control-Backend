@@ -16,7 +16,7 @@ import pyproj
 
 import paho.mqtt.client as mqtt
 from std_msgs.msg import String
-from geometry_msgs.msg import Twist, PoseStamped
+from geometry_msgs.msg import Twist, PoseStamped, PoseWithCovarianceStamped
 from nav_msgs.msg import Odometry
 from actionlib import SimpleActionClient
 from move_base_msgs.msg import MoveBaseAction, MoveBaseGoal
@@ -190,6 +190,9 @@ class FiwareMqttBridge:
         self.odom_sub = rospy.Subscriber('/odom', Odometry, self.odom_callback)
         self.cmd_vel_sub = rospy.Subscriber('/cmd_vel', Twist, self.cmd_vel_callback)
         
+        # Track robot position from localization at all times (prevents teleportation on first mission)
+        self.amcl_sub = rospy.Subscriber('/amcl_pose', PoseWithCovarianceStamped, self.amcl_pose_callback)
+
         # Map switch integration
         self.map_switch_status_sub = rospy.Subscriber('/robot/map_switch_status', String, self.map_switch_status_callback)
         
@@ -1131,6 +1134,15 @@ class FiwareMqttBridge:
             self.current_position[1] = msg.pose.pose.position.y
             # Extract yaw from quaternion if needed
     
+    def amcl_pose_callback(self, msg):
+        """Track robot position from localization at all times.
+
+        Keeps current_position in sync with fake_localization/amcl,
+        preventing teleportation when the first navigation goal starts.
+        """
+        self.current_position[0] = msg.pose.pose.position.x
+        self.current_position[1] = msg.pose.pose.position.y
+
     def cmd_vel_callback(self, msg):
         """Handle cmd_vel updates (for debugging)"""
         if msg.linear.x != 0 or msg.angular.z != 0:

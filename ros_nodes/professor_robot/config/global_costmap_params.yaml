@@ -15,6 +15,11 @@ global_costmap:
   static_map: true
   rolling_window: false
 
+  # Track unknown space so undrawn areas are not free
+  # Unknown cells get cost 255 (NO_INFORMATION) — global planner
+  # prefers roads but can traverse unknown as fallback
+  track_unknown_space: true
+
   # Transform tolerance
   transform_tolerance: 0.5
 

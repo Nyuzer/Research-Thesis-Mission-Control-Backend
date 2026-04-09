@@ -15,8 +15,6 @@ cost_scaling_factor: 5.0 # Standard scaling
 
 # Map update parameters - balanced performance
 map_type: costmap
-track_unknown_space: false # Simplified - don't track unknown
-unknown_cost_value: 0 # Unknown areas are free
 lethal_cost_threshold: 100
 neutral_cost: 50
 mark_threshold: 0

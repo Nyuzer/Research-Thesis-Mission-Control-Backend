@@ -132,3 +132,5 @@ websockets==12.0
 xacro==1.14.19
 bcrypt==4.2.1
 python-jose[cryptography]==3.3.0
+Pillow>=10.0.0
+numpy>=1.24.0

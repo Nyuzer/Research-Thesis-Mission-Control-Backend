@@ -5,9 +5,9 @@
 
   <!-- Arguments -->
   <arg name="map_file" default="$(find professor_robot)/maps/occupancy_grid.yaml"/>
-  <arg name="open_rviz" default="true"/>
+  <arg name="open_rviz" default="false"/>
   <arg name="use_gps" default="false" doc="Use GPS localization instead of fake_localization"/>
-  <arg name="use_real_coordinates" default="false" doc="Use real EPSG:25832 coordinates in fake_localization"/>
+
   <arg name="enable_speed_limiter" default="false" doc="Enable speed limiter for safe robot operation"/>
   <arg name="speed_scale" default="0.2" doc="Speed scaling factor (0.2 = 20% speed)"/>
 
@@ -31,7 +31,8 @@
   <group unless="$(arg use_gps)">
     <!-- Simulation-based localization -->
     <node name="fake_localization" pkg="professor_robot" type="fake_localization.py" output="screen">
-      <param name="use_real_coordinates" value="$(arg use_real_coordinates)" />
+      <param name="initial_x" value="392926.234" />
+      <param name="initial_y" value="5707219.578" />
     </node>
     <node name="robot_info" pkg="rostopic" type="rostopic" 
           args="pub -1 /robot/localization_mode std_msgs/String 'FAKE_LOCALIZATION'" />

@@ -3,10 +3,9 @@
 import rospy
 import tf2_ros
 from geometry_msgs.msg import PoseWithCovarianceStamped, TransformStamped, Twist
-from nav_msgs.msg import Odometry
+from nav_msgs.msg import Odometry, OccupancyGrid
 from std_msgs.msg import String
 import math
-import time
 
 class FakeLocalization:
     def __init__(self):
@@ -26,29 +25,16 @@ class FakeLocalization:
         
         # Subscribe to map switch status to handle TF recovery
         self.map_switch_sub = rospy.Subscriber('/robot/map_switch_status', String, self.map_switch_callback)
-        
-        # Configure robot position based on coordinate mode
-        use_real_coordinates = rospy.get_param('~use_real_coordinates', False)
-        
-        if use_real_coordinates:
-            # Real EPSG:25832 coordinates (German UTM Zone 32N)
-            self.x = 392926.234  # Real position in UTM
-            self.y = 5707219.578  # Real position in UTM
-            self.coordinate_mode = "REAL_UTM"
-            rospy.loginfo("🗺️ Fake Localization: Using REAL EPSG:25832 coordinates")
-            rospy.loginfo(f"   Initial position: ({self.x:.3f}, {self.y:.3f})")
-        else:
-            # Normalized coordinates for simulation (works with map origin [0,0,0])
-            self.x = 80.0  # Simulation position in normalized map
-            self.y = 17.0  # Simulation position in normalized map  
-            self.coordinate_mode = "SIMULATION"
-            rospy.loginfo("🗺️ Fake Localization: Using SIMULATION normalized coordinates")
-            rospy.loginfo(f"   Initial position: ({self.x:.3f}, {self.y:.3f})")
-        
+
+        # Subscribe to /map to log origin changes (position is independent of map origin)
+        self.map_sub = rospy.Subscriber('/map', OccupancyGrid, self.map_callback)
+
+        # Initial position in EPSG:25832 (absolute UTM meters)
+        self.x = rospy.get_param('~initial_x', 392926.234)
+        self.y = rospy.get_param('~initial_y', 5707219.578)
+        rospy.loginfo("Fake Localization: EPSG:25832 position (%.3f, %.3f)", self.x, self.y)
+
         self.theta = 0.0
-        
-        # Flag to track if we need to adjust position for real-world maps
-        self.map_origin_offset = [0.0, 0.0, 0.0]
         
         # Velocity tracking for simulation
         self.current_linear_vel = 0.0
@@ -98,7 +84,14 @@ class FakeLocalization:
             rospy.loginfo("🔒 Disabling TF recovery mode - system stable")
             self.map_switching = False
             self.force_tf_publish = False
-            
+
+    def map_callback(self, msg):
+        """Log map origin changes. Position is absolute EPSG:25832, independent of map origin."""
+        ox = msg.info.origin.position.x
+        oy = msg.info.origin.position.y
+        rospy.loginfo("Map loaded with origin [%.3f, %.3f] - robot position unchanged (%.3f, %.3f)",
+                      ox, oy, self.x, self.y)
+
     def tf_health_monitor(self, event):
         """Monitor TF health and force recovery if needed"""
         current_time = rospy.Time.now()
@@ -148,7 +141,7 @@ class FakeLocalization:
             
             # Log significant movements for debugging
             if abs(dx) > 0.001 or abs(dy) > 0.001 or abs(msg.angular.z) > 0.01:
-                rospy.loginfo("Robot moved: position=(%.3f, %.3f), theta=%.3f, cmd=(%.3f, %.3f)", 
+                rospy.loginfo("Robot moved: position=(%.3f, %.3f), theta=%.3f, cmd=(%.3f, %.3f)",
                             self.x, self.y, self.theta, msg.linear.x, msg.angular.z)
                 
             # Force TF update during movement to ensure connectivity
@@ -159,17 +152,18 @@ class FakeLocalization:
         
     def publish_pose(self, event):
         current_time = rospy.Time.now()
-        
-        # Always use real current time - no artificial time manipulation
-        # This prevents "jump back in time" errors that corrupt navigation
-        
+
+        # Position is already absolute EPSG:25832
+        abs_x = self.x
+        abs_y = self.y
+
         # Publish transform from map to odom with real timing
         t = TransformStamped()
         t.header.stamp = current_time
         t.header.frame_id = "map"
         t.child_frame_id = "odom"
-        t.transform.translation.x = self.x  # Robot position in map
-        t.transform.translation.y = self.y
+        t.transform.translation.x = abs_x  # Robot position in map (absolute)
+        t.transform.translation.y = abs_y
         t.transform.translation.z = 0.0
         t.transform.rotation.x = 0.0
         t.transform.rotation.y = 0.0
@@ -207,8 +201,8 @@ class FakeLocalization:
         pose_msg = PoseWithCovarianceStamped()
         pose_msg.header.stamp = current_time
         pose_msg.header.frame_id = "map"
-        pose_msg.pose.pose.position.x = self.x
-        pose_msg.pose.pose.position.y = self.y
+        pose_msg.pose.pose.position.x = abs_x
+        pose_msg.pose.pose.position.y = abs_y
         pose_msg.pose.pose.position.z = 0.0
         pose_msg.pose.pose.orientation.x = 0.0
         pose_msg.pose.pose.orientation.y = 0.0

@@ -51,3 +51,4 @@ catkin_ws/
 *.log
 logs/
 MANUAL.md
+professor_robot_catkin_backup/
