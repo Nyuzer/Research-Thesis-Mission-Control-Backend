@@ -1,12 +1,12 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState, useCallback } from "react";
 import L from "leaflet";
 // @ts-ignore
 import "proj4leaflet";
 import proj4 from "proj4";
 
-import { useSelectionStore } from "../utils/state";
+import { useSelectionStore, Zone } from "../utils/state";
 import yaml from "js-yaml";
-import { fetchMapFiles, fetchZones } from "../utils/api";
+import { fetchMapFiles, fetchZones, updateZone } from "../utils/api";
 import { showToast } from "@/lib/toast";
 
 // EPSG:25832 proj string
@@ -23,6 +23,19 @@ const CRS_25832: any = new (L as any).Proj.CRS(
     resolutions,
   }
 );
+
+/* ── Point-in-polygon (ray casting) ── */
+function pointInPolygon(x: number, y: number, polygon: number[][]): boolean {
+  let inside = false;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const xi = polygon[i][0], yi = polygon[i][1];
+    const xj = polygon[j][0], yj = polygon[j][1];
+    if (((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi)) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
 
 /* ── Inline marker components (rendered inside the overlay <svg>) ── */
 
@@ -114,6 +127,7 @@ function ZonePolygon({
   goalPoint,
   isDefault,
   toPixel,
+  draggingGoal,
 }: {
   polygon: number[][];
   zoneType: string;
@@ -123,6 +137,7 @@ function ZonePolygon({
   goalPoint?: number[] | null;
   isDefault?: boolean | null;
   toPixel: (wx: number, wy: number) => { cx: number; cy: number };
+  draggingGoal?: { cx: number; cy: number } | null;
 }) {
   const points = polygon.map(([x, y]) => toPixel(x, y));
   if (points.some((p) => !isFinite(p.cx) || !isFinite(p.cy))) return null;
@@ -135,9 +150,9 @@ function ZonePolygon({
   const defaultStar = isDefault ? " \u2605" : "";
   const label = zoneType === "parking" ? `P: ${name}${defaultStar}` : `${speedLimit ?? "?"} m/s`;
 
-  // Goal point marker
-  const gp = goalPoint && goalPoint.length >= 2 ? toPixel(goalPoint[0], goalPoint[1]) : null;
-  const gpValid = gp && isFinite(gp.cx) && isFinite(gp.cy);
+  // Goal point: use dragging position if active, otherwise stored position
+  const gpSource = draggingGoal || (goalPoint && goalPoint.length >= 2 ? toPixel(goalPoint[0], goalPoint[1]) : null);
+  const gpValid = gpSource && isFinite(gpSource.cx) && isFinite(gpSource.cy);
 
   return (
     <g>
@@ -146,14 +161,16 @@ function ZonePolygon({
         {label}
       </text>
       {gpValid && (
-        <g>
+        <g style={{ cursor: "grab", pointerEvents: "auto" }}>
+          {/* Larger invisible hit area for easier grabbing */}
+          <circle cx={gpSource.cx} cy={gpSource.cy} r="12" fill="transparent" />
           {/* Green crosshair for goal point */}
-          <line x1={gp.cx - 8} y1={gp.cy} x2={gp.cx - 3} y2={gp.cy} stroke="#22c55e" strokeWidth="2" strokeLinecap="round" />
-          <line x1={gp.cx + 3} y1={gp.cy} x2={gp.cx + 8} y2={gp.cy} stroke="#22c55e" strokeWidth="2" strokeLinecap="round" />
-          <line x1={gp.cx} y1={gp.cy - 8} x2={gp.cx} y2={gp.cy - 3} stroke="#22c55e" strokeWidth="2" strokeLinecap="round" />
-          <line x1={gp.cx} y1={gp.cy + 3} x2={gp.cx} y2={gp.cy + 8} stroke="#22c55e" strokeWidth="2" strokeLinecap="round" />
-          <circle cx={gp.cx} cy={gp.cy} r="3" fill="#22c55e" stroke="#0f172a" strokeWidth="1" />
-          <text x={gp.cx} y={gp.cy - 12} textAnchor="middle" fill="#22c55e" fontSize="8" fontWeight="600" paintOrder="stroke" stroke="#0f172a" strokeWidth="2" strokeLinejoin="round" fontFamily="Inter, sans-serif">
+          <line x1={gpSource.cx - 8} y1={gpSource.cy} x2={gpSource.cx - 3} y2={gpSource.cy} stroke="#22c55e" strokeWidth="2" strokeLinecap="round" />
+          <line x1={gpSource.cx + 3} y1={gpSource.cy} x2={gpSource.cx + 8} y2={gpSource.cy} stroke="#22c55e" strokeWidth="2" strokeLinecap="round" />
+          <line x1={gpSource.cx} y1={gpSource.cy - 8} x2={gpSource.cx} y2={gpSource.cy - 3} stroke="#22c55e" strokeWidth="2" strokeLinecap="round" />
+          <line x1={gpSource.cx} y1={gpSource.cy + 3} x2={gpSource.cx} y2={gpSource.cy + 8} stroke="#22c55e" strokeWidth="2" strokeLinecap="round" />
+          <circle cx={gpSource.cx} cy={gpSource.cy} r="3" fill="#22c55e" stroke="#0f172a" strokeWidth="1" />
+          <text x={gpSource.cx} y={gpSource.cy - 12} textAnchor="middle" fill="#22c55e" fontSize="8" fontWeight="600" paintOrder="stroke" stroke="#0f172a" strokeWidth="2" strokeLinejoin="round" fontFamily="Inter, sans-serif">
             GOAL
           </text>
         </g>
@@ -192,6 +209,10 @@ export default function MapView() {
   const selectedRobotId = useSelectionStore((s) => s.selectedRobotId);
   const zones = useSelectionStore((s) => s.zones);
   const showZones = useSelectionStore((s) => s.showZones);
+
+  // Goal point dragging state
+  const [dragZoneId, setDragZoneId] = useState<string | null>(null);
+  const [dragPos, setDragPos] = useState<{ cx: number; cy: number } | null>(null);
 
   // Initialize Leaflet map once
   useEffect(() => {
@@ -381,6 +402,97 @@ export default function MapView() {
     }
   }, [robots, selectedRobotId]);
 
+  /* ── Goal point drag helpers ── */
+  const getOverlayMetrics = useCallback(() => {
+    const meta = useSelectionStore.getState().mapMeta;
+    const imgEl = document.querySelector('img[alt="map"]') as HTMLImageElement | null;
+    const contEl = overlayContainerRef.current;
+    if (!meta || !imgEl || !contEl || !imgSize) return null;
+    const imgRect = imgEl.getBoundingClientRect();
+    const contRect = contEl.getBoundingClientRect();
+    const left = imgRect.left - contRect.left;
+    const top = imgRect.top - contRect.top;
+    const width = imgRect.width;
+    const height = imgRect.height;
+    const scaleX = imgSize.w / width;
+    const scaleY = imgSize.h / height;
+    return { meta, left, top, width, height, scaleX, scaleY, imgRect };
+  }, [imgSize]);
+
+  const pixelToWorld = useCallback((svgX: number, svgY: number) => {
+    const m = getOverlayMetrics();
+    if (!m) return null;
+    const px = svgX * m.scaleX;
+    const pyFromTop = svgY * m.scaleY;
+    const pyFromBottom = m.meta.heightPx - pyFromTop;
+    const worldX = m.meta.originX + px * m.meta.resolution;
+    const worldY = m.meta.originY + pyFromBottom * m.meta.resolution;
+    return { worldX, worldY };
+  }, [getOverlayMetrics]);
+
+  const handleGoalMouseDown = useCallback((e: React.MouseEvent, zoneId: string) => {
+    e.stopPropagation();
+    e.preventDefault();
+    setDragZoneId(zoneId);
+    // dragPos will be set on first mousemove
+  }, []);
+
+  const handleOverlayMouseMove = useCallback((e: React.MouseEvent) => {
+    if (!dragZoneId) return;
+    const m = getOverlayMetrics();
+    if (!m) return;
+    const svgX = e.clientX - m.imgRect.left;
+    const svgY = e.clientY - m.imgRect.top;
+
+    // Convert to SVG coordinate space (divided by scale since SVG is stretched)
+    const cx = svgX;
+    const cy = svgY;
+
+    // Check point-in-polygon in world coordinates
+    const world = pixelToWorld(cx, cy);
+    if (!world) return;
+
+    const zone = useSelectionStore.getState().zones.find((z: Zone) => z.zoneId === dragZoneId);
+    if (!zone) return;
+
+    if (pointInPolygon(world.worldX, world.worldY, zone.polygon)) {
+      setDragPos({ cx, cy });
+    }
+  }, [dragZoneId, getOverlayMetrics, pixelToWorld]);
+
+  const handleOverlayMouseUp = useCallback(async () => {
+    if (!dragZoneId || !dragPos) {
+      setDragZoneId(null);
+      setDragPos(null);
+      return;
+    }
+
+    const world = pixelToWorld(dragPos.cx, dragPos.cy);
+    const mapId = useSelectionStore.getState().selectedMapId;
+    if (!world || !mapId) {
+      setDragZoneId(null);
+      setDragPos(null);
+      return;
+    }
+
+    try {
+      await updateZone(mapId, dragZoneId, { goalPoint: [world.worldX, world.worldY] });
+      // Update local store
+      const currentZones = useSelectionStore.getState().zones;
+      useSelectionStore.getState().setZones(
+        currentZones.map((z: Zone) =>
+          z.zoneId === dragZoneId ? { ...z, goalPoint: [world.worldX, world.worldY] } : z
+        )
+      );
+      showToast("Goal point updated", "success");
+    } catch (err: any) {
+      showToast(err?.message || "Failed to update goal point", "error");
+    }
+
+    setDragZoneId(null);
+    setDragPos(null);
+  }, [dragZoneId, dragPos, pixelToWorld]);
+
   return (
     <div className="relative h-full w-full">
       <div
@@ -390,6 +502,9 @@ export default function MapView() {
       <div
         ref={overlayContainerRef}
         className="absolute inset-0 z-[1] flex justify-center items-start overflow-auto bg-card"
+        onMouseMove={dragZoneId ? handleOverlayMouseMove : undefined}
+        onMouseUp={dragZoneId ? handleOverlayMouseUp : undefined}
+        onMouseLeave={dragZoneId ? handleOverlayMouseUp : undefined}
       >
         {imgSrc && (
           <img
@@ -464,8 +579,25 @@ export default function MapView() {
                       goalPoint={z.goalPoint}
                       isDefault={z.isDefault}
                       toPixel={toPixel}
+                      draggingGoal={dragZoneId === z.zoneId ? dragPos : null}
                     />
                   ))}
+                  {/* Invisible drag targets for goal points */}
+                  {showZones && zones.filter((z: Zone) => z.zoneType === "parking" && z.goalPoint?.length === 2).map((z: Zone) => {
+                    const gp = toPixel(z.goalPoint![0], z.goalPoint![1]);
+                    if (!isFinite(gp.cx) || !isFinite(gp.cy)) return null;
+                    return (
+                      <circle
+                        key={`drag-${z.zoneId}`}
+                        cx={dragZoneId === z.zoneId && dragPos ? dragPos.cx : gp.cx}
+                        cy={dragZoneId === z.zoneId && dragPos ? dragPos.cy : gp.cy}
+                        r="14"
+                        fill="transparent"
+                        style={{ cursor: "grab", pointerEvents: "auto" }}
+                        onMouseDown={(e) => handleGoalMouseDown(e, z.zoneId)}
+                      />
+                    );
+                  })}
                   {/* Connection line from selected robot to destination */}
                   {selectedRobotPixel && destPixel && (
                     <ConnectionLine

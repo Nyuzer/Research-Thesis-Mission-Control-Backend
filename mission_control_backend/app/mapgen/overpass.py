@@ -1,5 +1,6 @@
 from __future__ import annotations
 from typing import Optional
+import asyncio
 import httpx
 import logging
 import json
@@ -17,7 +18,7 @@ async def query_osm_features(south: float, west: float, north: float, east: floa
     bbox = f"{south},{west},{north},{east}"
 
     query = (
-        f'[out:json][timeout:30][bbox:{bbox}];'
+        f'[out:json][timeout:45][bbox:{bbox}];'
         f'(way["building"];relation["building"];'
         f'way["highway"~"^(motorway|trunk|primary|secondary|tertiary|residential|service|unclassified|pedestrian|footway|cycleway|path|living_street)$"];'
         f'way["waterway"];way["natural"="water"];relation["natural"="water"];'
@@ -25,27 +26,36 @@ async def query_osm_features(south: float, west: float, north: float, east: floa
         f');out geom;'
     )
 
-    logger.info(f"Overpass query for bbox {bbox}: {query[:100]}...")
-    try:
-        async with httpx.AsyncClient(verify=False) as client:
-            resp = await client.post(
-                OVERPASS_URL,
-                data={"data": query},
-                headers={"Content-Type": "application/x-www-form-urlencoded"},
-                timeout=60.0,
-            )
-            logger.info(f"Overpass response status: {resp.status_code}")
-            resp.raise_for_status()
-            data = resp.json()
-    except httpx.ConnectError as e:
-        logger.error(f"Cannot connect to Overpass API: {e}")
-        raise RuntimeError(f"Cannot connect to Overpass API: {e}")
-    except httpx.HTTPStatusError as e:
-        logger.error(f"Overpass API returned {e.response.status_code}: {e.response.text[:200]}")
-        raise RuntimeError(f"Overpass API error {e.response.status_code}")
-    except Exception as e:
-        logger.error(f"Overpass request failed: {type(e).__name__}: {e}")
-        raise
+    logger.info(f"Overpass query bbox={bbox}")
+
+    for attempt in range(2):
+        try:
+            async with httpx.AsyncClient(verify=False) as client:
+                resp = await client.post(
+                    OVERPASS_URL,
+                    data={"data": query},
+                    headers={"Content-Type": "application/x-www-form-urlencoded"},
+                    timeout=90.0,
+                )
+                logger.info(f"Overpass response status: {resp.status_code}")
+                if resp.status_code in (429, 504) and attempt == 0:
+                    logger.warning(f"Overpass returned {resp.status_code}, retrying once in 10s")
+                    await asyncio.sleep(10)
+                    continue
+                resp.raise_for_status()
+                data = resp.json()
+                break
+        except httpx.ConnectError as e:
+            logger.error(f"Cannot connect to Overpass API: {e}")
+            raise RuntimeError(f"Cannot connect to Overpass API: {e}")
+        except httpx.HTTPStatusError as e:
+            logger.error(f"Overpass API returned {e.response.status_code}: {e.response.text[:200]}")
+            raise RuntimeError(f"Overpass API error {e.response.status_code}")
+        except Exception as e:
+            logger.error(f"Overpass request failed: {type(e).__name__}: {e}")
+            raise
+    else:
+        raise RuntimeError("Overpass API unavailable (504). Please try again.")
 
     features = []
     for element in data.get("elements", []):
@@ -140,7 +150,7 @@ def _classify(tags: dict) -> str:
     if tags.get("highway"):
         return "free"
     if tags.get("amenity") == "parking":
-        return "parking"
+        return "occupied"
     return "unknown"
 
 

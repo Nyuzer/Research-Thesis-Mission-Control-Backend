@@ -177,6 +177,18 @@ export async function createZone(
   });
 }
 
+export async function updateZone(
+  mapId: string,
+  zoneId: string,
+  data: { goalPoint?: number[]; name?: string; isDefault?: boolean }
+) {
+  return fetchJSON(`/api/maps/${encodeURIComponent(mapId)}/zones/${encodeURIComponent(zoneId)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
 export async function deleteZone(mapId: string, zoneId: string) {
   return fetchJSON(`/api/maps/${encodeURIComponent(mapId)}/zones/${encodeURIComponent(zoneId)}`, {
     method: "DELETE",

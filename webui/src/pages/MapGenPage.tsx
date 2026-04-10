@@ -11,7 +11,7 @@ import { Label } from "@/components/ui/label";
 import {
   Paintbrush, Eraser, Square, Pentagon, Search, Save, Scan,
   MousePointer, Undo2, Redo2, Layers, MapPin, Gauge, ParkingSquare,
-  Wand2, Trash2, MousePointerClick, Pencil,
+  Wand2, Trash2, MousePointerClick, Pencil, Eye, EyeOff,
 } from "lucide-react";
 
 /* ── proj4 + CRS ── */
@@ -169,6 +169,7 @@ export default function MapGenPage() {
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [saving, setSaving] = useState(false);
   const [osmLoading, setOsmLoading] = useState(false);
+  const [osmCooldown, setOsmCooldown] = useState(0);
   const [baseLayer, setBaseLayer] = useState<"osm" | "ortho">((s?.baseLayer as "osm" | "ortho") || "osm");
   const [polyVertexCount, setPolyVertexCount] = useState(0);
   // Undo/redo: snapshot-based history
@@ -177,6 +178,7 @@ export default function MapGenPage() {
   const [selectedFeatureId, setSelectedFeatureId] = useState<string | null>(null);
   const [settingGoalPoint, setSettingGoalPoint] = useState(false);
   const [editFeatureId, setEditFeatureId] = useState<string | null>(null);
+  const [canvasVisible, setCanvasVisible] = useState(true);
   const editFeatureIdRef = useRef<string | null>(null);
   editFeatureIdRef.current = editFeatureId;
   const editDragRef = useRef<{ vertexIdx: number; featureId: string } | null>(null);
@@ -430,6 +432,12 @@ export default function MapGenPage() {
       mapRef.current = null;
     };
   }, []);
+
+  /* ── Toggle canvas visibility ── */
+  useEffect(() => {
+    const canvas = overlayCanvasRef.current;
+    if (canvas) canvas.style.display = canvasVisible ? "block" : "none";
+  }, [canvasVisible]);
 
   /* ── Canvas re-render on map events ── */
   useEffect(() => {
@@ -1153,6 +1161,12 @@ export default function MapGenPage() {
 
       const zoneMsg = zones.length > 0 ? `, ${zones.length} zone(s)` : "";
       showToast(`Map "${mapName}" saved! (${widthPx}x${heightPx}px${zoneMsg})`, "success");
+
+      // Clear session after successful save to prevent stale state
+      try { sessionStorage.removeItem(SS_KEY); } catch {}
+      setFeatures([]);
+      setBbox(null);
+      setMapName("");
     } catch (e: any) {
       showToast(e?.message || "Export failed", "error");
     } finally {
@@ -1167,13 +1181,15 @@ export default function MapGenPage() {
     try {
       const sw = bbox.getSouthWest();
       const ne = bbox.getNorthEast();
+      const payload = {
+        south: sw.lat, west: sw.lng,
+        north: ne.lat, east: ne.lng,
+      };
+      console.log("[OSM Auto-fill] bbox payload:", JSON.stringify(payload));
       const data = await fetchJSON<any>("/api/mapgen/overpass", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          south: sw.lat, west: sw.lng,
-          north: ne.lat, east: ne.lng,
-        }),
+        body: JSON.stringify(payload),
       });
 
       const newFeatures: DrawnFeature[] = [];
@@ -1224,12 +1240,23 @@ export default function MapGenPage() {
 
       addFeatures((prev) => [...prev, ...newFeatures]);
       showToast(`Added ${newFeatures.length} features from OSM`, "success");
+      showToast("Parking areas are shown as obstacles. Use the Parking Zone tool to mark areas where the robot can drive and park.", "info");
+
+      // Start cooldown to avoid Overpass rate limiting (429)
+      setOsmCooldown(30);
     } catch (e: any) {
       showToast(e?.message || "OSM auto-fill failed", "error");
     } finally {
       setOsmLoading(false);
     }
   };
+
+  // Cooldown timer for Overpass rate limiting
+  useEffect(() => {
+    if (osmCooldown <= 0) return;
+    const t = setTimeout(() => setOsmCooldown((c) => c - 1), 1000);
+    return () => clearTimeout(t);
+  }, [osmCooldown]);
 
   /* ── Compute bbox info for display ── */
   const bboxInfo = bbox ? (() => {
@@ -1479,6 +1506,15 @@ export default function MapGenPage() {
           </div>
         </div>
 
+        {/* Eye toggle to hide/show drawn features */}
+        <button
+          onClick={() => setCanvasVisible((v) => !v)}
+          className="absolute bottom-3 right-3 z-[1000] p-1.5 rounded-md bg-card/90 border border-border hover:bg-accent transition-colors shadow-md"
+          title={canvasVisible ? "Hide drawn features" : "Show drawn features"}
+        >
+          {canvasVisible ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
+        </button>
+
         {/* Leaflet map (canvas overlay is created inside programmatically) */}
         <div ref={mapDivRef} className="absolute inset-0 z-0" />
       </div>
@@ -1528,9 +1564,9 @@ export default function MapGenPage() {
           className="w-full gap-2"
           variant="outline"
           onClick={autoFillOSM}
-          disabled={osmLoading || !bbox}
+          disabled={osmLoading || !bbox || osmCooldown > 0}
         >
-          <Wand2 className="h-4 w-4" /> {osmLoading ? "Loading OSM..." : "Auto-Fill from OSM"}
+          <Wand2 className="h-4 w-4" /> {osmLoading ? "Loading OSM..." : osmCooldown > 0 ? `Wait ${osmCooldown}s` : "Auto-Fill from OSM"}
         </Button>
       </div>
     </div>

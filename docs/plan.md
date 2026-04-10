@@ -42,3 +42,20 @@
 - [x] 5A.2 — Mount mapgen router in main.py
 - [x] 5B.1 — Create frontend MapGenPage with canvas drawing tools
 - [x] 5B.2 — Add MapGen route and nav item to App.tsx
+
+## Phase 6: Parking Zone Redesign & Map Overlay Controls
+
+### Step 1 — OSM parking → occupied (backend)
+- [x] 6.1 — Change `overpass.py` `_classify()`: `amenity=parking` → return `"occupied"` instead of `"parking"`
+
+### Step 2 — Tooltip after OSM auto-fill (frontend MapGenPage)
+- [x] 6.2 — After successful auto-fill, show info toast explaining parking is now obstacles
+
+### Step 3 — Add `updateZone` API function (frontend)
+- [x] 6.3 — Add `updateZone(mapId, zoneId, data)` to `api.ts`
+
+### Step 4 — Goal point drag on main page (MapView)
+- [x] 6.4 — Draggable goal points with point-in-polygon constraint on MapView
+
+### Step 5 — Eye toggle button for overlay visibility (MapView)
+- [x] 6.5 — Eye/EyeOff toggle button to hide/show entire SVG overlay

@@ -28,6 +28,8 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
         </BrowserRouter>
         <Toaster
           position="bottom-left"
+          duration={10000}
+          closeButton
           toastOptions={{
             style: {
               background: "var(--card)",
