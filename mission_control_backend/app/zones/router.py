@@ -79,7 +79,7 @@ def _entity_to_zone(entity: dict) -> ZoneResponse:
 
 async def _clear_other_defaults(map_id: str, exclude_zone_id: str):
     """Reset isDefault=false for all other zones on this map."""
-    params = {"type": "Zone", "q": "mapId=={};isDefault==true".format(map_id), "limit": "1000"}
+    params = {"type": "Zone", "q": "mapId=={};isDefault=='true'".format(map_id), "limit": "1000"}
     read_headers = {"Accept": "application/json", "fiware-service": FIWARE_SERVICE, "fiware-servicepath": FIWARE_SERVICE_PATH}
     try:
         async with httpx.AsyncClient() as client:

@@ -52,6 +52,23 @@ export async function stopRobot(robotId: string) {
   });
 }
 
+export async function fetchRobotAutoPark(robotId: string) {
+  return fetchJSON<{ robotId: string; enabled: boolean }>(
+    `/api/robot/${encodeURIComponent(robotId)}/auto-park`
+  );
+}
+
+export async function updateRobotAutoPark(robotId: string, enabled: boolean) {
+  return fetchJSON<{ robotId: string; enabled: boolean }>(
+    `/api/robot/${encodeURIComponent(robotId)}/auto-park`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled }),
+    }
+  );
+}
+
 export async function sendMissionInstant(params: {
   robotId: string;
   mapId: string;

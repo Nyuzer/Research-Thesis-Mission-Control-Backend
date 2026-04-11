@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useSelectionStore } from "../utils/state";
-import { fetchMaps, fetchRobots, stopRobot } from "../utils/api";
+import { fetchMaps, fetchRobots, stopRobot, fetchRobotAutoPark, updateRobotAutoPark } from "../utils/api";
 import { useEffect, useRef, useState } from "react";
 import { showToast } from "@/lib/toast";
 import { Badge } from "@/components/ui/badge";
@@ -17,7 +17,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { Button } from "@/components/ui/button";
-import { OctagonX } from "lucide-react";
+import { OctagonX, ParkingSquare } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export default function TopBanner() {
@@ -77,6 +77,32 @@ export default function TopBanner() {
   useEffect(() => {
     if (robots?.robots) setRobots(robots.robots);
   }, [robots]);
+
+  const [autoParkEnabled, setAutoParkEnabled] = useState(false);
+  const [autoParkLoading, setAutoParkLoading] = useState(false);
+  useEffect(() => {
+    if (!selectedRobotId) {
+      setAutoParkEnabled(false);
+      return;
+    }
+    fetchRobotAutoPark(selectedRobotId)
+      .then((res) => setAutoParkEnabled(res.enabled))
+      .catch(() => setAutoParkEnabled(false));
+  }, [selectedRobotId]);
+
+  const onToggleAutoPark = async () => {
+    if (!selectedRobotId) return;
+    setAutoParkLoading(true);
+    try {
+      const res = await updateRobotAutoPark(selectedRobotId, !autoParkEnabled);
+      setAutoParkEnabled(res.enabled);
+      showToast(`Auto-park ${res.enabled ? "enabled" : "disabled"}`, "info");
+    } catch (e: any) {
+      showToast(e?.message || "Failed to toggle auto-park", "error");
+    } finally {
+      setAutoParkLoading(false);
+    }
+  };
 
   const onStop = async () => {
     if (!selectedRobotId) {
@@ -143,6 +169,34 @@ export default function TopBanner() {
           <span className="hidden sm:inline text-sm">Stop / Abort</span>
           <span className="sm:hidden">Stop</span>
         </Button>
+
+        {selectedRobotId && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="outline"
+                size="sm"
+                className={cn(
+                  "h-8 sm:h-9 sm:px-4 gap-1.5",
+                  autoParkEnabled && "bg-success/20 border-success/30 text-success"
+                )}
+                onClick={onToggleAutoPark}
+                disabled={autoParkLoading}
+              >
+                <ParkingSquare className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+                <span className="hidden sm:inline text-sm">
+                  {autoParkEnabled ? "Auto-Park On" : "Auto-Park Off"}
+                </span>
+                <span className="sm:hidden">
+                  {autoParkEnabled ? "P" : "P"}
+                </span>
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              Auto-park: robot goes to parking after 60s idle
+            </TooltipContent>
+          </Tooltip>
+        )}
       </div>
 
       {/* Row 2: Status badges */}

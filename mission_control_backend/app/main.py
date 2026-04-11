@@ -96,9 +96,13 @@ LOCAL_MQTT_USERNAME = os.getenv("LOCAL_MQTT_USERNAME", "")
 LOCAL_MQTT_PASSWORD = os.getenv("LOCAL_MQTT_PASSWORD", "")
 
 # Auto-park: track IDLE robots and send to default parking after timeout
-robot_idle_tracker: dict = {}   # {robot_id: {"idle_since": float, "sent": bool}}
+robot_idle_tracker: dict = {}   # {robot_id: {"idle_since": float}}
 robot_last_map: dict = {}       # {robot_id: map_id} — set when sending missions
+robot_auto_park: dict = {}      # {robot_id: bool} — populated from FIWARE autoParkEnabled attr
+robot_fiware_id: dict = {}      # {normalized_id: "urn:ngsi-ld:Robot:..."} — original FIWARE entity id
+parking_zone_cache: dict = {}   # {map_id: {"data": zone_or_None, "ts": float}}
 AUTO_PARK_IDLE_SECONDS = 60
+PARKING_CACHE_TTL = 60
 
 # Local Mission Storage (for local MQTT mode)
 local_missions = {}
@@ -590,6 +594,14 @@ async def list_robots_from_orion() -> List[RobotInfo]:
                     except Exception:
                         pos_25832 = None
 
+                    # Read autoParkEnabled attribute (stored separately from RobotInfo)
+                    auto_park_val = safe_get_value_local(entity, "autoParkEnabled", None)
+                    if auto_park_val is not None:
+                        robot_auto_park[robot_id] = bool(auto_park_val)
+
+                    # Store original FIWARE entity id for PATCH operations
+                    robot_fiware_id[robot_id] = robot_id_full
+
                     robots_parsed.append(RobotInfo(
                         robotId=robot_id,
                         name=name,
@@ -616,6 +628,12 @@ async def list_robots_from_orion() -> List[RobotInfo]:
             aggregated: dict[str, RobotInfo] = {}
             for r in robots_parsed:
                 norm_id = normalize_id(r.robotId)
+                # Re-key auto_park and fiware_id mappings to normalized id
+                if r.robotId != norm_id:
+                    if r.robotId in robot_auto_park:
+                        robot_auto_park[norm_id] = robot_auto_park.pop(r.robotId)
+                    if r.robotId in robot_fiware_id:
+                        robot_fiware_id[norm_id] = robot_fiware_id.pop(r.robotId)
                 r.robotId = norm_id
                 r.name = normalize_name(r.name) or norm_id
                 existing = aggregated.get(norm_id)
@@ -664,10 +682,29 @@ async def websocket_endpoint(websocket: WebSocket):
         if websocket in connected_websockets:
             connected_websockets.remove(websocket)
 
+def _parse_zone_goal_point(entity):
+    """Extract goal point from a Zone entity. Returns [x, y] or None."""
+    gp_raw = entity.get("goalPoint", {}).get("value", "")
+    if isinstance(gp_raw, str) and gp_raw:
+        return json.loads(gp_raw)
+    if isinstance(gp_raw, list):
+        return gp_raw
+    # Fall back to polygon centroid
+    poly_raw = entity.get("polygon", {}).get("value", "[]")
+    if isinstance(poly_raw, str):
+        poly = json.loads(poly_raw)
+    else:
+        poly = poly_raw
+    if poly:
+        n = len(poly)
+        return [sum(p[0] for p in poly) / n, sum(p[1] for p in poly) / n]
+    return None
+
+
 async def get_default_parking_zone(map_id: str):
     """Fetch the default parking zone for a map from FIWARE."""
     orion_url = FIWARE_ORION_URL
-    params = {"type": "Zone", "q": "mapId=={};zoneType==parking;isDefault==true".format(map_id), "limit": "1"}
+    params = {"type": "Zone", "q": "mapId=={};zoneType==parking;isDefault=='true'".format(map_id), "limit": "1"}
     read_headers = {"Accept": "application/json", "fiware-service": FIWARE_SERVICE, "fiware-servicepath": FIWARE_SERVICE_PATH}
     try:
         async with httpx.AsyncClient() as client:
@@ -678,29 +715,57 @@ async def get_default_parking_zone(map_id: str):
             entities = res.json()
             if not entities:
                 return None
-            entity = entities[0]
-            # Parse goalPoint
-            gp_raw = entity.get("goalPoint", {}).get("value", "")
-            if isinstance(gp_raw, str) and gp_raw:
-                goal_point = json.loads(gp_raw)
-            elif isinstance(gp_raw, list):
-                goal_point = gp_raw
-            else:
-                # Fall back to polygon centroid
-                poly_raw = entity.get("polygon", {}).get("value", "[]")
-                if isinstance(poly_raw, str):
-                    poly = json.loads(poly_raw)
-                else:
-                    poly = poly_raw
-                if poly:
-                    n = len(poly)
-                    goal_point = [sum(p[0] for p in poly) / n, sum(p[1] for p in poly) / n]
-                else:
-                    return None
-            return {"goalPoint": goal_point, "mapId": map_id}
+            gp = _parse_zone_goal_point(entities[0])
+            return {"goalPoint": gp, "mapId": map_id} if gp else None
     except Exception as e:
         logger.error(f"Error fetching default parking zone: {e}")
         return None
+
+
+async def get_all_parking_zones(map_id: str):
+    """Fetch all parking zones for a map from FIWARE."""
+    params = {"type": "Zone", "q": "mapId=={};zoneType==parking".format(map_id), "limit": "1000"}
+    read_headers = {"Accept": "application/json", "fiware-service": FIWARE_SERVICE, "fiware-servicepath": FIWARE_SERVICE_PATH}
+    try:
+        async with httpx.AsyncClient() as client:
+            res = await client.get(FIWARE_ORION_URL, params=params, headers=read_headers, timeout=10.0)
+            if res.status_code == 404:
+                return []
+            res.raise_for_status()
+            entities = res.json()
+            zones = []
+            for entity in entities:
+                gp = _parse_zone_goal_point(entity)
+                if gp:
+                    zones.append({"goalPoint": gp, "mapId": map_id})
+            return zones
+    except Exception as e:
+        logger.error(f"Error fetching parking zones: {e}")
+        return []
+
+
+async def get_cached_parking_zone(map_id: str, robot_pos=None):
+    """Fetch parking zone with caching (60s TTL). Prefers default, falls back to nearest."""
+    now = time.time()
+    cache_key = map_id
+    cached = parking_zone_cache.get(cache_key)
+    if cached and (now - cached["ts"]) < PARKING_CACHE_TTL:
+        zones = cached["data"]
+    else:
+        default = await get_default_parking_zone(map_id)
+        if default:
+            zones = [default]
+        else:
+            zones = await get_all_parking_zones(map_id)
+        parking_zone_cache[cache_key] = {"data": zones, "ts": now}
+
+    if not zones:
+        return None
+    if len(zones) == 1 or not robot_pos:
+        return zones[0]
+    # Pick nearest to robot
+    rx, ry = robot_pos
+    return min(zones, key=lambda z: (rx - z["goalPoint"][0]) ** 2 + (ry - z["goalPoint"][1]) ** 2)
 
 
 async def check_auto_park(robots):
@@ -709,49 +774,87 @@ async def check_auto_park(robots):
     for robot in robots:
         rid = robot.robotId
         state = (robot.state or "").upper()
-        if state == "IDLE":
-            if rid not in robot_idle_tracker:
-                robot_idle_tracker[rid] = {"idle_since": now, "sent": False}
-            tracker = robot_idle_tracker[rid]
-            if tracker["sent"]:
-                continue
-            idle_duration = now - tracker["idle_since"]
-            if idle_duration >= AUTO_PARK_IDLE_SECONDS:
-                map_id = robot_last_map.get(rid)
-                if not map_id:
-                    continue
-                parking = await get_default_parking_zone(map_id)
-                if not parking:
-                    continue
-                gp = parking["goalPoint"]
-                # Check distance to goal point — skip if robot already near (< 2m)
-                if robot.position25832:
-                    rx, ry = robot.position25832
-                    dist = ((rx - gp[0]) ** 2 + (ry - gp[1]) ** 2) ** 0.5
-                    if dist < 2.0:
-                        tracker["sent"] = True
-                        logger.info(f"Robot {rid} already near parking, skipping auto-park")
-                        continue
-                # Send MOVE_TO command
-                try:
-                    cmd = CommandMessage(
-                        command="MOVE_TO",
-                        commandTime=datetime.utcnow().isoformat() + "Z",
-                        waypoints=Point(type="Point", coordinates=[gp[0], gp[1], 0]),
-                        mapId=map_id,
-                        missionId="autopark_{}".format(uuid.uuid4().hex[:6]),
-                    )
-                    await send_fiware_command(rid, cmd)
-                    tracker["sent"] = True
-                    logger.info(f"Auto-park: sent robot {rid} to default parking at [{gp[0]:.1f}, {gp[1]:.1f}]")
-                except Exception as e:
-                    logger.error(f"Auto-park failed for robot {rid}: {e}")
-        else:
-            # Robot not IDLE — reset tracker
+        if state != "IDLE":
             robot_idle_tracker.pop(rid, None)
+            continue
+        # Robot is IDLE
+        if rid not in robot_idle_tracker:
+            robot_idle_tracker[rid] = {"idle_since": now}
+            continue
+        idle_duration = now - robot_idle_tracker[rid]["idle_since"]
+        if idle_duration < AUTO_PARK_IDLE_SECONDS:
+            continue
+        # 60s+ idle — run checks
+        if not robot_auto_park.get(rid, False):
+            continue
+        map_id = robot_last_map.get(rid)
+        if not map_id:
+            continue
+        parking = await get_cached_parking_zone(map_id, robot_pos=robot.position25832)
+        if not parking:
+            continue
+        gp = parking["goalPoint"]
+        # Already at parking? Remove from tracker, distance check stops re-sending
+        if robot.position25832:
+            rx, ry = robot.position25832
+            dist = ((rx - gp[0]) ** 2 + (ry - gp[1]) ** 2) ** 0.5
+            if dist < 2.0:
+                robot_idle_tracker.pop(rid, None)
+                logger.info(f"Robot {rid} already near parking, skipping auto-park")
+                continue
+        # Check for pending scheduled missions
+        try:
+            scheduled = await list_scheduled_missions_from_orion()
+            has_pending = any(
+                m.robotId == rid and m.status == "scheduled"
+                for m in scheduled
+            )
+            if has_pending:
+                robot_idle_tracker.pop(rid, None)
+                logger.info(f"Robot {rid} has pending scheduled missions, skipping auto-park")
+                continue
+        except Exception:
+            pass  # If query fails, proceed with auto-park
+        # Send MOVE_TO command and create Mission entity
+        try:
+            now_iso = datetime.utcnow().isoformat() + "Z"
+            mission_id = "autopark_{}".format(uuid.uuid4().hex[:6])
+            cmd = CommandMessage(
+                command="MOVE_TO",
+                commandTime=now_iso,
+                waypoints=Point(type="Point", coordinates=[gp[0], gp[1], 0]),
+                mapId=map_id,
+                missionId=mission_id,
+            )
+            await send_fiware_command(rid, cmd)
+            # Create Mission entity in FIWARE so it appears in mission list
+            entity = {
+                "id": f"urn:ngsi-ld:Mission:{mission_id}",
+                "type": "Mission",
+                "robotId": {"type": "Relationship", "value": f"urn:ngsi-ld:Robot:{rid}"},
+                "sentTime": {"type": "DateTime", "value": now_iso},
+                "status": {"type": "Property", "value": "sent"},
+                "command": {"type": "Property", "value": cmd.model_dump()},
+                "completedTime": {"type": "DateTime", "value": None},
+                "executedTime": {"type": "DateTime", "value": None},
+                "fiwareResponse": {"type": "Property", "value": {}},
+                "developmentMode": {"type": "Property", "value": False},
+            }
+            headers = {
+                "Content-Type": "application/json",
+                "fiware-service": FIWARE_SERVICE,
+                "fiware-servicepath": FIWARE_SERVICE_PATH,
+            }
+            async with httpx.AsyncClient() as client:
+                await client.post(FIWARE_ORION_URL, json=entity, headers=headers, timeout=10.0)
+            robot_idle_tracker.pop(rid, None)
+            logger.info(f"Auto-park: sent robot {rid} to parking at [{gp[0]:.1f}, {gp[1]:.1f}], mission {mission_id}")
+        except Exception as e:
+            logger.error(f"Auto-park failed for robot {rid}: {e}")
 
 
 async def ws_broadcast_loop():
+    loop_count = 0
     while True:
         try:
             robots = await list_robots_from_orion()
@@ -769,11 +872,13 @@ async def ws_broadcast_loop():
                     except Exception as e:
                         logger.warning(f"Dropping WS client due to send error: {e}")
                 connected_websockets[:] = living_clients
-            # Check auto-park after broadcast
-            try:
-                await check_auto_park(robots)
-            except Exception as e:
-                logger.error(f"Auto-park check error: {e}")
+            # Check auto-park every 3rd loop (~6s)
+            loop_count += 1
+            if loop_count % 3 == 0:
+                try:
+                    await check_auto_park(robots)
+                except Exception as e:
+                    logger.error(f"Auto-park check error: {e}")
         except Exception as e:
             logger.error(f"WS broadcast loop error: {e}")
         # Broadcast interval
@@ -2452,9 +2557,61 @@ async def stop_robot(robot_id: str, _user: UserResponse = Depends(require_role(U
     except Exception as e:
         logger.error(f"❌ Unexpected error sending STOP command to {robot_id}: {str(e)}")
         raise HTTPException(
-            status_code=500, 
+            status_code=500,
             detail=f"Unexpected error sending STOP command: {str(e)}"
         )
+
+
+class AutoParkUpdate(BaseModel):
+    enabled: bool
+
+
+@app.get("/api/robot/{robot_id}/auto-park")
+async def get_robot_auto_park(robot_id: str, _user: UserResponse = Depends(require_role(UserRole.admin, UserRole.operator))):
+    """Get auto-park enabled state for a robot."""
+    return {"robotId": robot_id, "enabled": robot_auto_park.get(robot_id, False)}
+
+
+@app.put("/api/robot/{robot_id}/auto-park")
+async def set_robot_auto_park(robot_id: str, body: AutoParkUpdate, _user: UserResponse = Depends(require_role(UserRole.admin, UserRole.operator))):
+    """Enable/disable auto-park for a robot. Stores autoParkEnabled attribute on FIWARE Robot entity."""
+    entity_id = robot_fiware_id.get(robot_id)
+    if not entity_id:
+        raise HTTPException(status_code=404, detail=f"Robot {robot_id} not found — wait for next WS broadcast")
+    batch_payload = {
+        "actionType": "append",
+        "entities": [{
+            "type": "Robot",
+            "id": entity_id,
+            "autoParkEnabled": {"type": "Boolean", "value": body.enabled}
+        }]
+    }
+    orion_base = FIWARE_ORION_URL.replace("/v2/entities", "/v2/op/update")
+    headers = {
+        "Content-Type": "application/json",
+        "fiware-service": FIWARE_SERVICE,
+        "fiware-servicepath": FIWARE_SERVICE_PATH
+    }
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                orion_base,
+                json=batch_payload,
+                headers=headers,
+                timeout=10.0
+            )
+            if response.status_code not in (204, 200):
+                raise HTTPException(status_code=response.status_code, detail=f"FIWARE update failed: {response.text}")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to update auto-park: {str(e)}")
+    robot_auto_park[robot_id] = body.enabled
+    if not body.enabled:
+        robot_idle_tracker.pop(robot_id, None)
+    logger.info(f"Auto-park {'enabled' if body.enabled else 'disabled'} for robot {robot_id}")
+    return {"robotId": robot_id, "enabled": body.enabled}
+
 
 @app.post("/api/robot/local-mqtt/{robot_id}/stop")
 async def stop_robot_local_mqtt(robot_id: str, _user: UserResponse = Depends(require_role(UserRole.admin, UserRole.operator))):
@@ -3061,7 +3218,8 @@ async def _execute_scheduled_mission_async(mission_id: str):
         
         # Send to robot (non-blocking)
         await send_fiware_command(mission.robotId, mission.command)
-        
+        robot_last_map[mission.robotId] = mission.command.mapId
+
         # Update sentTime to record when mission was sent
         from datetime import datetime
         import pytz
@@ -3230,7 +3388,8 @@ async def check_and_execute_due_missions():
                         
                         # Send mission to robot
                         await send_fiware_command(mission.robotId, mission.command)
-                        
+                        robot_last_map[mission.robotId] = mission.command.mapId
+
                         logger.info(f"Mission {mission.command.missionId} sent to robot successfully")
                         
                     else:  # More than 600 seconds overdue - mark as expired
@@ -3679,6 +3838,7 @@ async def create_advanced_mission(
         )
         try:
             fiware_response = await send_fiware_command(request.robotId, command_message)
+            robot_last_map[request.robotId] = request.mapId
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to send first step: {e}")
     else:

@@ -83,7 +83,7 @@ async def generate_map(
             # If this zone is default, clear other defaults
             if is_default:
                 try:
-                    params = {"type": "Zone", "q": f"mapId=={map_id};isDefault==true", "limit": "1000"}
+                    params = {"type": "Zone", "q": f"mapId=={map_id};isDefault=='true'", "limit": "1000"}
                     read_headers = {"Accept": "application/json", "fiware-service": FIWARE_SERVICE, "fiware-servicepath": FIWARE_SERVICE_PATH}
                     async with httpx.AsyncClient() as client:
                         res = await client.get(FIWARE_ORION_URL, params=params, headers=read_headers, timeout=10.0)
