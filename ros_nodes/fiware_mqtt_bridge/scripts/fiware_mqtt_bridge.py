@@ -1226,13 +1226,11 @@ class FiwareMqttBridge:
             return
 
         rx, ry = self.current_position[0], self.current_position[1]
-        in_zone = False
+        factor = self.default_speed_scale
         for zone in self.speed_limit_zones:
             if self.point_in_polygon(rx, ry, zone['polygon']):
-                in_zone = True
+                factor = zone.get('speedLimit', self.zone_speed_scale)
                 break
-
-        factor = self.zone_speed_scale if in_zone else self.default_speed_scale
         self.speed_factor_pub.publish(Float32(data=factor))
 
     def cmd_vel_callback(self, msg):

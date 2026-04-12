@@ -1431,11 +1431,14 @@ export default function MapGenPage() {
                         <Input
                           type="number"
                           step="0.1"
+                          min="0.1"
+                          max="0.9"
                           placeholder="0.5"
                           value={zf.zoneSpeedLimit ?? ""}
                           onClick={(e) => e.stopPropagation()}
                           onChange={(e) => {
-                            const val = parseFloat(e.target.value) || undefined;
+                            const raw = parseFloat(e.target.value);
+                            const val = Number.isNaN(raw) ? undefined : Math.min(0.9, Math.max(0.1, raw));
                             setFeatures((prev) => prev.map((f) => f.id === zf.id ? { ...f, zoneSpeedLimit: val } : f));
                           }}
                           className="h-6 text-xs flex-1"
