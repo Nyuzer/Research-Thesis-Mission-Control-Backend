@@ -15,7 +15,7 @@ from enum import Enum
 import pyproj
 
 import paho.mqtt.client as mqtt
-from std_msgs.msg import String
+from std_msgs.msg import String, Float32
 from geometry_msgs.msg import Twist, PoseStamped, PoseWithCovarianceStamped
 from nav_msgs.msg import Odometry
 from actionlib import SimpleActionClient
@@ -68,6 +68,7 @@ class FiwareMqttBridge:
         self.last_transition_reason = ""
         
         # Map management
+        self.map_switch_ready = threading.Event()
         self.backend_url = self.config.get('maps', {}).get('backend_url', 'http://localhost:8000/api/maps')
         self.local_maps_path = self.config.get('maps', {}).get('local_path', '/tmp/fiware_maps')
 
@@ -77,6 +78,13 @@ class FiwareMqttBridge:
         # Ensure local maps directory exists
         os.makedirs(self.local_maps_path, exist_ok=True)
         
+        # Speed limit zone enforcement
+        self.speed_limit_zones = []
+        self.speed_factor_pub = rospy.Publisher('/speed_factor', Float32, queue_size=1)
+        self.default_speed_scale = 1.0
+        self.zone_speed_scale = 0.5
+        self.last_zone_check = 0
+
         # MQTT client
         self.mqtt_client = None
         self.mqtt_connected = False
@@ -608,17 +616,19 @@ class FiwareMqttBridge:
         try:
             status = msg.data
             rospy.loginfo(f"Map switch status received: {status}")
-            
-            if status.startswith("SUCCESS:"):
-                # Map switch successful
-                rospy.loginfo("Map switch completed successfully - localization should now be stable")
-                # Continue with navigation planning
-                # The planning state transition will happen in handle_move_to_command
+
+            if status.startswith("READY:"):
+                # Map fully loaded, costmaps resized, TF stable — safe to navigate
+                rospy.loginfo("Map switch READY - unblocking navigation")
+                self.map_switch_ready.set()
+            elif status.startswith("SUCCESS:"):
+                rospy.loginfo("Map switch SUCCESS - waiting for READY before navigating")
             elif status.startswith("ERROR:"):
-                # Map switch failed
+                # Map switch failed — unblock waiter so it can handle the error
                 rospy.logerr(f"Map switch failed: {status}")
+                self.map_switch_ready.set()
                 self.transition_state(RobotState.ERROR, f"Map switch failed: {status}")
-            
+
         except Exception as e:
             rospy.logerr(f"Error processing map switch status: {e}")
     
@@ -686,19 +696,25 @@ class FiwareMqttBridge:
                 
                 # Request map switch via ROS service
                 rospy.loginfo(f"Requesting map server restart with map {map_id}")
+                self.map_switch_ready.clear()
                 if not self.request_map_switch(map_id):
                     self.transition_state(RobotState.ERROR, f"Failed to request map switch to {map_id}")
                     return
-                
+
                 # Update current map ID
                 self.current_map_id = map_id
                 rospy.loginfo(f"Map switch initiated for {map_id}")
-                
-                # Wait for map switch to complete before sending goal
+
+                # Wait for map switch READY status before sending goal
                 rospy.loginfo("Waiting for map switch to complete...")
-                rospy.sleep(2.0)  # Give map_server time to restart and localization to stabilize
+                if not self.map_switch_ready.wait(timeout=30.0):
+                    rospy.logwarn("Map switch timed out after 30s — proceeding anyway")
                 rospy.loginfo(f"Current robot position after map switch: ({self.current_position[0]:.3f}, {self.current_position[1]:.3f})")
             
+            # Fetch speed limit zones for this map
+            if map_id:
+                self.fetch_speed_limit_zones(map_id)
+
             # Transition to planning state
             self.transition_state(RobotState.PLANNING, "Generating navigation path")
             
@@ -1144,14 +1160,80 @@ class FiwareMqttBridge:
             self.current_position[1] = msg.pose.pose.position.y
             # Extract yaw from quaternion if needed
     
+    def fetch_speed_limit_zones(self, map_id):
+        """Fetch speed_limit zones for the given map from the backend."""
+        try:
+            url = f"{self.backend_url}/{map_id}/zones"
+            headers = {}
+            if self.robot_api_key:
+                headers['X-Robot-API-Key'] = self.robot_api_key
+            response = requests.get(url, headers=headers, timeout=10)
+            response.raise_for_status()
+            zones = response.json()
+
+            self.speed_limit_zones = []
+            for zone in zones:
+                if zone.get('zoneType') != 'speed_limit':
+                    continue
+                polygon_raw = zone.get('polygon', '')
+                if isinstance(polygon_raw, str):
+                    polygon = json.loads(polygon_raw)
+                else:
+                    polygon = polygon_raw
+                self.speed_limit_zones.append({
+                    'id': zone.get('id'),
+                    'name': zone.get('name', ''),
+                    'polygon': polygon,
+                    'speedLimit': zone.get('speedLimit', self.zone_speed_scale),
+                })
+
+            rospy.loginfo(f"Fetched {len(self.speed_limit_zones)} speed_limit zone(s) for map {map_id}")
+        except Exception as e:
+            rospy.logwarn(f"Failed to fetch speed limit zones: {e}")
+            self.speed_limit_zones = []
+
+    @staticmethod
+    def point_in_polygon(x, y, polygon):
+        """Ray-casting algorithm for point-in-polygon check."""
+        n = len(polygon)
+        inside = False
+        j = n - 1
+        for i in range(n):
+            xi, yi = polygon[i]
+            xj, yj = polygon[j]
+            if ((yi > y) != (yj > y)) and (x < (xj - xi) * (y - yi) / (yj - yi) + xi):
+                inside = not inside
+            j = i
+        return inside
+
     def amcl_pose_callback(self, msg):
         """Track robot position from localization at all times.
 
         Keeps current_position in sync with fake_localization/amcl,
         preventing teleportation when the first navigation goal starts.
+        Also checks speed limit zones at ~2 Hz.
         """
         self.current_position[0] = msg.pose.pose.position.x
         self.current_position[1] = msg.pose.pose.position.y
+
+        # Throttle zone checks to ~2 Hz
+        now = time.time()
+        if now - self.last_zone_check < 0.5:
+            return
+        self.last_zone_check = now
+
+        if not self.speed_limit_zones:
+            return
+
+        rx, ry = self.current_position[0], self.current_position[1]
+        in_zone = False
+        for zone in self.speed_limit_zones:
+            if self.point_in_polygon(rx, ry, zone['polygon']):
+                in_zone = True
+                break
+
+        factor = self.zone_speed_scale if in_zone else self.default_speed_scale
+        self.speed_factor_pub.publish(Float32(data=factor))
 
     def cmd_vel_callback(self, msg):
         """Handle cmd_vel updates (for debugging)"""

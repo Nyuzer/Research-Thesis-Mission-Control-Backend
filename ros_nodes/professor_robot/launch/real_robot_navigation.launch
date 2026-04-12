@@ -6,7 +6,7 @@
   <!-- Arguments -->
   <arg name="map_file" default="$(find professor_robot)/maps/occupancy_grid.yaml"/>
   <arg name="open_rviz" default="true"/>
-  <arg name="speed_scale" default="0.2" doc="Speed scaling factor (0.2 = 20% speed)"/>
+  <arg name="speed_scale" default="0.4" doc="Speed scaling factor for real robot (0.4 = 40% speed for safety)"/>
 
   <!-- Map Management -->
   <!-- Dynamic map server managed by dedicated map_manager node -->
@@ -29,6 +29,8 @@
 
   <!-- Move Base Navigation -->
   <node pkg="move_base" type="move_base" respawn="false" name="move_base" output="screen">
+    <!-- Remap cmd_vel so speed_limiter can intercept it -->
+    <remap from="cmd_vel" to="cmd_vel_raw" />
     <!-- Load parameter files - Clean, simplified configuration -->
     <rosparam file="$(find professor_robot)/config/costmap_common_params.yaml" command="load" ns="global_costmap" />
     <rosparam file="$(find professor_robot)/config/costmap_common_params.yaml" command="load" ns="local_costmap" />

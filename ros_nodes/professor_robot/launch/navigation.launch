@@ -8,8 +8,8 @@
   <arg name="open_rviz" default="false"/>
   <arg name="use_gps" default="false" doc="Use GPS localization instead of fake_localization"/>
 
-  <arg name="enable_speed_limiter" default="false" doc="Enable speed limiter for safe robot operation"/>
-  <arg name="speed_scale" default="0.2" doc="Speed scaling factor (0.2 = 20% speed)"/>
+  <arg name="enable_speed_limiter" default="true" doc="Enable speed limiter for safe robot operation"/>
+  <arg name="speed_scale" default="1.0" doc="Speed scaling factor (1.0 = full speed, zones override dynamically)"/>
 
   <!-- Map Management -->
   <!-- Dynamic map server managed by dedicated map_manager node -->
@@ -50,6 +50,8 @@
 
   <!-- Move Base Navigation -->
   <node pkg="move_base" type="move_base" respawn="false" name="move_base" output="screen">
+    <!-- Remap cmd_vel so speed_limiter can intercept it -->
+    <remap from="cmd_vel" to="cmd_vel_raw" />
     <!-- Load parameter files - Clean, simplified configuration -->
     <rosparam file="$(find professor_robot)/config/costmap_common_params.yaml" command="load" ns="global_costmap" />
     <rosparam file="$(find professor_robot)/config/costmap_common_params.yaml" command="load" ns="local_costmap" />

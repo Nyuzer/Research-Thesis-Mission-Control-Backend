@@ -8,7 +8,7 @@ import logging
 import httpx
 import os
 
-from app.auth.dependencies import get_current_user, require_role
+from app.auth.dependencies import get_current_user, get_robot_or_user, require_role
 from app.auth.models import UserResponse, UserRole
 from .models import ZoneCreate, ZoneUpdate, ZoneResponse
 
@@ -98,7 +98,7 @@ async def _clear_other_defaults(map_id: str, exclude_zone_id: str):
 
 
 @router.get("", response_model=List[ZoneResponse])
-async def list_zones(map_id: str, _user: UserResponse = Depends(get_current_user)):
+async def list_zones(map_id: str, _user: UserResponse = Depends(get_robot_or_user)):
     params = {"type": "Zone", "q": "mapId=={}".format(map_id), "limit": "1000"}
     headers = {"Accept": "application/json", **{k: v for k, v in HEADERS.items() if k != "Content-Type"}}
     try:
