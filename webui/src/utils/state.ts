@@ -14,6 +14,12 @@ export interface Zone {
   createdAt: string;
 }
 
+export interface PreviewWaypoint {
+  stepIndex: number;
+  x: number;
+  y: number;
+}
+
 type SelectionState = {
   selectedRobotId: string | null;
   selectedMapId: string | null;
@@ -35,6 +41,7 @@ type SelectionState = {
   } | null;
   zones: Zone[];
   showZones: boolean;
+  previewWaypoints: PreviewWaypoint[];
   setZones: (zones: Zone[]) => void;
   setShowZones: (v: boolean) => void;
   setSelectedRobotId: (id: string) => void;
@@ -44,6 +51,8 @@ type SelectionState = {
   setRobots: (robots: any[]) => void;
   setDest: (x: number | null, y: number | null) => void;
   setMapMeta: (m: SelectionState["mapMeta"]) => void;
+  togglePreviewWaypoint: (wp: PreviewWaypoint) => void;
+  clearPreviewWaypoints: () => void;
 };
 
 export const useSelectionStore = create<SelectionState>((set) => ({
@@ -57,6 +66,7 @@ export const useSelectionStore = create<SelectionState>((set) => ({
   mapMeta: null,
   zones: [],
   showZones: true,
+  previewWaypoints: [],
   setSelectedRobotId: (id) => set({ selectedRobotId: id }),
   setSelectedMapId: (id) => set({ selectedMapId: id }),
   setWsConnected: (v) => set({ wsConnected: v }),
@@ -66,4 +76,14 @@ export const useSelectionStore = create<SelectionState>((set) => ({
   setShowZones: (v) => set({ showZones: v }),
   setDest: (x, y) => set({ destX: x, destY: y }),
   setMapMeta: (m) => set({ mapMeta: m }),
+  togglePreviewWaypoint: (wp) =>
+    set((s) => {
+      const exists = s.previewWaypoints.some((p) => p.stepIndex === wp.stepIndex);
+      return {
+        previewWaypoints: exists
+          ? s.previewWaypoints.filter((p) => p.stepIndex !== wp.stepIndex)
+          : [...s.previewWaypoints, wp],
+      };
+    }),
+  clearPreviewWaypoints: () => set({ previewWaypoints: [] }),
 }));

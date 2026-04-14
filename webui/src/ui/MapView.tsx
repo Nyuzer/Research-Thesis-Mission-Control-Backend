@@ -117,6 +117,33 @@ function DestinationMarker({ cx, cy }: { cx: number; cy: number }) {
   );
 }
 
+/* ── Waypoint preview marker (for MOVE_TO steps) ── */
+function WaypointPreviewMarker({ cx, cy, label }: { cx: number; cy: number; label: string }) {
+  const r = 5;
+  return (
+    <g>
+      <circle cx={cx} cy={cy} r={r + 2} fill="none" stroke="#a855f7" strokeWidth="1.5" opacity="0.4" />
+      <circle cx={cx} cy={cy} r={r} fill="#a855f7" stroke="#0f172a" strokeWidth="1.5" />
+      <circle cx={cx} cy={cy} r={r * 0.35} fill="white" opacity="0.8" />
+      <text
+        x={cx}
+        y={cy - r - 5}
+        textAnchor="middle"
+        fill="#a855f7"
+        fontSize="9"
+        fontFamily="Inter, sans-serif"
+        fontWeight="600"
+        paintOrder="stroke"
+        stroke="#0f172a"
+        strokeWidth="3"
+        strokeLinejoin="round"
+      >
+        {label}
+      </text>
+    </g>
+  );
+}
+
 /* ── Zone polygon overlay ── */
 function ZonePolygon({
   polygon,
@@ -209,6 +236,7 @@ export default function MapView() {
   const selectedRobotId = useSelectionStore((s) => s.selectedRobotId);
   const zones = useSelectionStore((s) => s.zones);
   const showZones = useSelectionStore((s) => s.showZones);
+  const previewWaypoints = useSelectionStore((s) => s.previewWaypoints);
 
   // Goal point dragging state
   const [dragZoneId, setDragZoneId] = useState<string | null>(null);
@@ -624,6 +652,19 @@ export default function MapView() {
                         />
                       );
                     })}
+                  {/* Preview waypoints from advanced mission steps */}
+                  {previewWaypoints.map((wp) => {
+                    const p = toPixel(wp.x, wp.y);
+                    if (!isFinite(p.cx) || !isFinite(p.cy)) return null;
+                    return (
+                      <WaypointPreviewMarker
+                        key={`wp-${wp.stepIndex}`}
+                        cx={p.cx}
+                        cy={p.cy}
+                        label={`#${wp.stepIndex + 1}`}
+                      />
+                    );
+                  })}
                   {/* Destination marker */}
                   {destPixel && (
                     <DestinationMarker cx={destPixel.cx} cy={destPixel.cy} />

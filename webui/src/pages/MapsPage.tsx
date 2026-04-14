@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { fetchMaps, uploadMap, deleteMap } from "../utils/api";
 import { useRef, useState, useEffect, useCallback } from "react";
+import { removeLocalTemplatesForMap, cleanupOrphanTemplates } from "@/utils/localTemplates";
 import ConfirmDeleteDialog from "@/components/ConfirmDeleteDialog";
 import { showToast } from "@/lib/toast";
 import { Button } from "@/components/ui/button";
@@ -89,6 +90,13 @@ export default function MapsPage() {
   const [lightbox, setLightbox] = useState<{ src: string; name: string } | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
 
+  // Cleanup orphaned localStorage templates for deleted maps
+  useEffect(() => {
+    if (data?.maps) {
+      cleanupOrphanTemplates(data.maps.map((m: any) => m.mapId));
+    }
+  }, [data]);
+
   const handleImgLoad = (
     mapId: string,
     ev: React.SyntheticEvent<HTMLImageElement>
@@ -136,6 +144,7 @@ export default function MapsPage() {
     if (!deleteTarget) return;
     try {
       await deleteMap(deleteTarget);
+      removeLocalTemplatesForMap(deleteTarget);
       showToast("Map deleted", "success");
       refetch();
     } catch (e: any) {
@@ -159,7 +168,7 @@ export default function MapsPage() {
   const openLightbox = (src: string, name: string) => setLightbox({ src, name });
 
   return (
-    <div className="p-3 sm:p-4 max-w-7xl mx-auto">
+    <div className="p-3 sm:p-4 max-w-7xl mx-auto overflow-auto h-full">
       <h2 className="text-lg font-semibold mb-3">Maps Manager</h2>
 
       <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 mb-4">

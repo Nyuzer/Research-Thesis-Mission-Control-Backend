@@ -1,11 +1,13 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useSelectionStore } from "../utils/state";
 import {
   sendMissionInstant, sendMissionScheduled,
-  sendAdvancedMission, fetchMissionTemplates,
+  sendAdvancedMission, fetchMissionTemplates, deleteMissionTemplate,
+  fetchZones,
 } from "../utils/api";
 import { showToast } from "@/lib/toast";
 import { useAuthStore } from "@/utils/auth";
+import { getLocalTemplates, saveLocalTemplate, deleteLocalTemplate } from "@/utils/localTemplates";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -17,6 +19,9 @@ export default function RightPanel() {
   const mapId = useSelectionStore((s) => s.selectedMapId);
   const destX = useSelectionStore((s) => s.destX);
   const destY = useSelectionStore((s) => s.destY);
+  const previewWaypoints = useSelectionStore((s) => s.previewWaypoints);
+  const togglePreviewWaypoint = useSelectionStore((s) => s.togglePreviewWaypoint);
+  const clearPreviewWaypoints = useSelectionStore((s) => s.clearPreviewWaypoints);
   const [scheduledTime, setScheduledTime] = useState("");
   const [cron, setCron] = useState("");
 
@@ -27,6 +32,27 @@ export default function RightPanel() {
   const [advSaveTemplate, setAdvSaveTemplate] = useState(false);
   const [advTemplateName, setAdvTemplateName] = useState("");
   const [templates, setTemplates] = useState<any[]>([]);
+  const [parkingZones, setParkingZones] = useState<any[]>([]);
+
+  // Fetch parking zones when mapId changes; clear stale templates & PARK steps
+  useEffect(() => {
+    setTemplates([]);
+    clearPreviewWaypoints();
+    if (!mapId) { setParkingZones([]); return; }
+    fetchZones(mapId).then((zones) => {
+      const parking = (zones || []).filter((z: any) => z.zoneType === "parking");
+      setParkingZones(parking);
+      if (parking.length === 0) {
+        setAdvSteps((prev) => {
+          const filtered = prev.filter((s) => s.action !== "PARK");
+          if (filtered.length < prev.length) {
+            showToast("PARK steps removed — no parking zones on this map", "warning");
+          }
+          return filtered;
+        });
+      }
+    }).catch(() => setParkingZones([]));
+  }, [mapId]);
 
   const addStep = (action: string) => {
     if (action === "MOVE_TO" && destX != null && destY != null) {
@@ -38,8 +64,12 @@ export default function RightPanel() {
     }
   };
 
-  const removeStep = (i: number) => setAdvSteps((s) => s.filter((_, idx) => idx !== i));
+  const removeStep = (i: number) => {
+    clearPreviewWaypoints();
+    setAdvSteps((s) => s.filter((_, idx) => idx !== i));
+  };
   const moveStep = (i: number, dir: -1 | 1) => {
+    clearPreviewWaypoints();
     setAdvSteps((s) => {
       const arr = [...s];
       const j = i + dir;
@@ -71,9 +101,13 @@ export default function RightPanel() {
         saveAsTemplate: advSaveTemplate,
         templateName: advTemplateName || undefined,
       });
+      if (advSaveTemplate && mapId) {
+        saveLocalTemplate(mapId, advTemplateName || advName || "Untitled", steps);
+      }
       showToast("Advanced mission sent", "success");
       setAdvSteps([]);
       setAdvName("");
+      clearPreviewWaypoints();
     } catch (e: any) {
       showToast(e?.message || "Failed to send mission", "error");
     }
@@ -81,22 +115,45 @@ export default function RightPanel() {
 
   const loadTemplates = async () => {
     try {
-      const t = await fetchMissionTemplates();
-      setTemplates(t || []);
+      const server = await fetchMissionTemplates();
+      const local = mapId
+        ? getLocalTemplates(mapId).map((t: any, i: number) => ({ ...t, _local: true, _localIndex: i }))
+        : [];
+      setTemplates([...(server || []), ...local]);
     } catch {}
   };
 
+  const deleteTemplate = async (t: any, index: number) => {
+    try {
+      if (t._local) {
+        if (mapId) deleteLocalTemplate(mapId, t._localIndex);
+      } else {
+        await deleteMissionTemplate(t.templateId);
+      }
+      setTemplates((prev) => prev.filter((_, i) => i !== index));
+      showToast("Template deleted", "success");
+    } catch (e: any) {
+      showToast(e?.message || "Failed to delete template", "error");
+    }
+  };
+
   const loadTemplate = (t: any) => {
+    const steps = (t.steps || []).map((s: any) => ({
+      action: s.action,
+      x: s.waypoint?.coordinates?.[0],
+      y: s.waypoint?.coordinates?.[1],
+      duration: s.duration,
+      zoneId: s.zoneId,
+    }));
+
+    const hasParkSteps = steps.some((s: Step) => s.action === "PARK");
+    if (hasParkSteps && parkingZones.length === 0) {
+      showToast("Template contains PARK steps but no parking zones exist on this map", "error");
+      return;
+    }
+
     setAdvName(t.name);
-    setAdvSteps(
-      (t.steps || []).map((s: any) => ({
-        action: s.action,
-        x: s.waypoint?.coordinates?.[0],
-        y: s.waypoint?.coordinates?.[1],
-        duration: s.duration,
-        zoneId: s.zoneId,
-      }))
-    );
+    setAdvSteps(steps);
   };
 
   const ready = Boolean(robotId && mapId && destX != null && destY != null);
@@ -254,11 +311,20 @@ export default function RightPanel() {
 
           {/* Steps list */}
           <div className="space-y-1.5 max-h-48 overflow-y-auto">
-            {advSteps.map((step, i) => (
-              <div key={i} className="flex items-center gap-1 bg-secondary/30 rounded-md px-2 py-1.5 text-xs">
+            {advSteps.map((step, i) => {
+              const isPreviewActive = step.action === "MOVE_TO" && previewWaypoints.some((p) => p.stepIndex === i);
+              return (
+              <div key={i} className={`flex items-center gap-1 rounded-md px-2 py-1.5 text-xs ${isPreviewActive ? "bg-purple-500/20 ring-1 ring-purple-500/40" : "bg-secondary/30"}`}>
                 <span className="text-muted-foreground w-4">{i + 1}.</span>
                 <span className="text-foreground font-medium flex-1">
-                  {step.action === "MOVE_TO" && `MOVE (${step.x?.toFixed(0)}, ${step.y?.toFixed(0)})`}
+                  {step.action === "MOVE_TO" && (
+                    <span
+                      className="cursor-pointer hover:text-purple-400 transition-colors select-none"
+                      onClick={() => step.x != null && step.y != null && togglePreviewWaypoint({ stepIndex: i, x: step.x!, y: step.y! })}
+                    >
+                      MOVE ({step.x?.toFixed(0)}, {step.y?.toFixed(0)}) {isPreviewActive ? "●" : "○"}
+                    </span>
+                  )}
                   {step.action === "WAIT" && (
                     <>
                       WAIT{" "}
@@ -274,13 +340,32 @@ export default function RightPanel() {
                       s
                     </>
                   )}
-                  {step.action === "PARK" && "PARK"}
+                  {step.action === "PARK" && (
+                    <>
+                      PARK{" "}
+                      <select
+                        value={step.zoneId || ""}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setAdvSteps((s) => s.map((st, idx) => idx === i ? { ...st, zoneId: val } : st));
+                        }}
+                        className="bg-background border border-border rounded px-1 text-xs inline"
+                      >
+                        <option value="">Nearest (auto)</option>
+                        {parkingZones.map((z: any) => (
+                          <option key={z.id || z.name} value={z.id || z.name}>
+                            {z.name || z.id}
+                          </option>
+                        ))}
+                      </select>
+                    </>
+                  )}
                 </span>
                 <Button variant="ghost" size="icon" className="h-5 w-5" onClick={() => moveStep(i, -1)}><ChevronUp className="h-3 w-3" /></Button>
                 <Button variant="ghost" size="icon" className="h-5 w-5" onClick={() => moveStep(i, 1)}><ChevronDown className="h-3 w-3" /></Button>
                 <Button variant="ghost" size="icon" className="h-5 w-5 text-red-400" onClick={() => removeStep(i)}><X className="h-3 w-3" /></Button>
               </div>
-            ))}
+              ); })}
           </div>
 
           {/* Add step buttons */}
@@ -291,9 +376,16 @@ export default function RightPanel() {
             <Button size="sm" variant="outline" className="flex-1 text-xs h-7" onClick={() => addStep("WAIT")}>
               <Plus className="h-3 w-3 mr-1" /> Wait
             </Button>
-            <Button size="sm" variant="outline" className="flex-1 text-xs h-7" onClick={() => addStep("PARK")}>
-              <Plus className="h-3 w-3 mr-1" /> Park
-            </Button>
+            {parkingZones.length > 0 && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="flex-1 text-xs h-7"
+                onClick={() => addStep("PARK")}
+              >
+                <Plus className="h-3 w-3 mr-1" /> Park
+              </Button>
+            )}
           </div>
 
           {/* Templates */}
@@ -304,14 +396,26 @@ export default function RightPanel() {
           </div>
           {templates.length > 0 && (
             <div className="space-y-1 max-h-24 overflow-y-auto">
-              {templates.map((t) => (
-                <button
-                  key={t.templateId}
-                  className="w-full text-left text-xs px-2 py-1 bg-secondary/30 rounded hover:bg-secondary/50 text-foreground"
-                  onClick={() => loadTemplate(t)}
+              {templates.map((t, i) => (
+                <div
+                  key={t.templateId || `local-${i}`}
+                  className="flex items-center gap-1 bg-secondary/30 rounded hover:bg-secondary/50"
                 >
-                  {t.name} ({t.steps?.length || 0} steps)
-                </button>
+                  <button
+                    className="flex-1 text-left text-xs px-2 py-1 text-foreground truncate"
+                    onClick={() => loadTemplate(t)}
+                  >
+                    {t.name} ({t.steps?.length || 0} steps){t._local ? " (local)" : ""}
+                  </button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-5 w-5 shrink-0 text-muted-foreground hover:text-red-400"
+                    onClick={() => deleteTemplate(t, i)}
+                  >
+                    <Trash2 className="h-3 w-3" />
+                  </Button>
+                </div>
               ))}
             </div>
           )}
