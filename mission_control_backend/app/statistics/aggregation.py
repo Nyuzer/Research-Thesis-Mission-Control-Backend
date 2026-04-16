@@ -23,8 +23,10 @@ def compute_mission_summary(missions: list) -> dict:
 
 
 def compute_missions_over_time(missions: list, period: str = "day") -> list:
-    """Group missions by time period."""
-    buckets: dict[str, dict] = defaultdict(lambda: {"completed": 0, "failed": 0, "total": 0})
+    """Group missions by time period with all status breakdowns."""
+    buckets: dict[str, dict] = defaultdict(
+        lambda: {"completed": 0, "failed": 0, "cancelled": 0, "in_progress": 0, "total": 0}
+    )
 
     for m in missions:
         sent = _parse_time(m.sentTime)
@@ -32,8 +34,9 @@ def compute_missions_over_time(missions: list, period: str = "day") -> list:
             continue
         key = _bucket_key(sent, period)
         buckets[key]["total"] += 1
-        if m.status in ("completed", "failed"):
-            buckets[key][m.status] += 1
+        s = m.status
+        if s in ("completed", "failed", "cancelled", "in_progress"):
+            buckets[key][s] += 1
 
     return [{"period": k, **v} for k, v in sorted(buckets.items())]
 
@@ -117,6 +120,96 @@ def compute_peak_hours(missions: list) -> list:
         if sent:
             hours[sent.hour] += 1
     return [{"hour": h, "count": c} for h, c in sorted(hours.items())]
+
+
+def compute_mission_type_breakdown(regular: list, scheduled: list) -> list:
+    """Break down missions by type: Instant MOVE_TO, Advanced, Scheduled Once, Scheduled Recurring."""
+    instant_simple = 0
+    instant_advanced = 0
+    sched_once = 0
+    sched_recurring = 0
+
+    for m in regular:
+        cmd = m.command
+        if hasattr(cmd, "command"):
+            cmd_type = cmd.command
+        elif isinstance(cmd, dict):
+            cmd_type = cmd.get("command", "MOVE_TO")
+        else:
+            cmd_type = "MOVE_TO"
+
+        if cmd_type == "ADVANCED":
+            instant_advanced += 1
+        else:
+            instant_simple += 1
+
+    for m in scheduled:
+        if getattr(m, "scheduleType", "once") == "recurring" or getattr(m, "cron", None):
+            sched_recurring += 1
+        else:
+            sched_once += 1
+
+    return [
+        {"type": "Instant", "count": instant_simple},
+        {"type": "Advanced", "count": instant_advanced},
+        {"type": "Scheduled", "count": sched_once},
+        {"type": "Recurring", "count": sched_recurring},
+    ]
+
+
+def compute_map_usage(missions: list) -> list:
+    """Count missions per map."""
+    maps = defaultdict(int)
+    for m in missions:
+        cmd = m.command
+        if hasattr(cmd, "mapId"):
+            map_id = cmd.mapId
+        elif isinstance(cmd, dict):
+            map_id = cmd.get("mapId", "")
+        else:
+            map_id = ""
+        if map_id:
+            maps[map_id] += 1
+
+    return sorted(
+        [{"mapId": k, "count": v} for k, v in maps.items()],
+        key=lambda x: x["count"],
+        reverse=True,
+    )
+
+
+def compute_scheduled_summary(scheduled: list) -> dict:
+    """Summary of scheduled missions."""
+    by_status = defaultdict(int)
+    once = 0
+    recurring = 0
+    for m in scheduled:
+        by_status[m.status] += 1
+        if getattr(m, "scheduleType", "once") == "recurring" or getattr(m, "cron", None):
+            recurring += 1
+        else:
+            once += 1
+
+    return {
+        "total": len(scheduled),
+        "byStatus": dict(by_status),
+        "once": once,
+        "recurring": recurring,
+    }
+
+
+def compute_peak_heatmap(missions: list) -> list:
+    """Day-of-week x hour-of-day heatmap data."""
+    grid = defaultdict(int)
+    for m in missions:
+        sent = _parse_time(m.sentTime)
+        if sent:
+            grid[(sent.weekday(), sent.hour)] += 1
+
+    return [
+        {"day": day, "hour": hour, "count": count}
+        for (day, hour), count in sorted(grid.items())
+    ]
 
 
 # ── Helpers ──

@@ -187,6 +187,25 @@ body::before {
   animation: pulse-glow 2s ease-in-out infinite;
 }
 
+/* Dark scrollbar */
+.dark * {
+  scrollbar-color: oklch(0.35 0.014 285.823) transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+.dark *::-webkit-scrollbar-thumb {
+  background: oklch(0.35 0.014 285.823);
+  border-radius: 4px;
+}
+.dark *::-webkit-scrollbar-thumb:hover {
+  background: oklch(0.45 0.014 285.823);
+}
+
 /* Fix date/time input icons in dark mode (calendar, clock) */
 .dark input[type="datetime-local"]::-webkit-calendar-picker-indicator,
 .dark input[type="date"]::-webkit-calendar-picker-indicator,

@@ -10,6 +10,10 @@ from .aggregation import (
     compute_robot_utilization,
     compute_status_distribution,
     compute_peak_hours,
+    compute_mission_type_breakdown,
+    compute_map_usage,
+    compute_scheduled_summary,
+    compute_peak_heatmap,
 )
 
 logger = logging.getLogger(__name__)
@@ -74,4 +78,8 @@ async def overview(_user: UserResponse = Depends(get_current_user)):
         "statusDistribution": compute_status_distribution(regular),
         "robotUtilization": compute_robot_utilization(regular),
         "peakHours": compute_peak_hours(regular),
+        "missionTypeBreakdown": compute_mission_type_breakdown(regular, scheduled),
+        "mapUsage": compute_map_usage(regular),
+        "scheduledSummary": compute_scheduled_summary(scheduled),
+        "peakHeatmap": compute_peak_heatmap(regular),
     }

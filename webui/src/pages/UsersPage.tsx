@@ -1,10 +1,13 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { fetchUsers, createUser, updateUser, deleteUser } from "@/utils/api";
+import { useAuthStore } from "@/utils/auth";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import ConfirmDeleteDialog from "@/components/ConfirmDeleteDialog";
 import { showToast } from "@/lib/toast";
-import { Plus, Trash2, Pencil, X, Check, Shield, Eye, Wrench } from "lucide-react";
+import { Plus, Trash2, Pencil, X, Check, Shield, Eye, Wrench, Search, Filter } from "lucide-react";
 
 const ROLE_ICONS: Record<string, typeof Shield> = {
   admin: Shield,
@@ -20,6 +23,7 @@ const ROLE_COLORS: Record<string, string> = {
 
 export default function UsersPage() {
   const queryClient = useQueryClient();
+  const currentUser = useAuthStore((s) => s.user);
   const { data: users = [], isLoading } = useQuery({
     queryKey: ["users"],
     queryFn: fetchUsers,
@@ -28,6 +32,29 @@ export default function UsersPage() {
   const [showCreate, setShowCreate] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
+
+  // Filters
+  const [q, setQ] = useState("");
+  const [fRole, setFRole] = useState("all");
+  const [fStatus, setFStatus] = useState("all");
+
+  const hasFilters = Boolean(q || fRole !== "all" || fStatus !== "all");
+  const clearFilters = () => { setQ(""); setFRole("all"); setFStatus("all"); };
+
+  const filteredUsers = useMemo(() => {
+    return (users as any[]).filter((u) => {
+      if (q) {
+        const text = `${u.username} ${u.email}`.toLowerCase();
+        if (!text.includes(q.toLowerCase())) return false;
+      }
+      if (fRole !== "all" && u.role !== fRole) return false;
+      if (fStatus !== "all") {
+        const active = fStatus === "active";
+        if (u.is_active !== active) return false;
+      }
+      return true;
+    });
+  }, [users, q, fRole, fStatus]);
 
   // Create form
   const [form, setForm] = useState({ email: "", username: "", password: "", role: "operator" });
@@ -79,13 +106,63 @@ export default function UsersPage() {
     updateMut.mutate({ id: editId!, data });
   };
 
+  const handleDeleteClick = (u: any) => {
+    if (currentUser && u.id === currentUser.id) {
+      showToast("You cannot delete your own account", "warning");
+      return;
+    }
+    setDeleteTarget({ id: u.id, name: u.username });
+  };
+
   return (
-    <div className="p-4 sm:p-6 max-w-4xl mx-auto space-y-4">
+    <div className="p-4 sm:p-6 max-w-4xl mx-auto space-y-4 overflow-auto h-full">
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold text-foreground">User Management</h2>
         <Button size="sm" onClick={() => setShowCreate(true)}>
           <Plus className="h-4 w-4 mr-1" /> Add User
         </Button>
+      </div>
+
+      {/* Filters */}
+      <div className="grid grid-cols-2 sm:flex sm:flex-wrap sm:items-center gap-2">
+        <div className="relative col-span-2">
+          <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+          <Input
+            placeholder="Search name or email..."
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            className="pl-7 h-8 w-full sm:w-[200px] text-xs"
+          />
+        </div>
+        <Select value={fRole} onValueChange={setFRole}>
+          <SelectTrigger className="h-8 w-full sm:w-[130px] text-xs">
+            <SelectValue placeholder="Role" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All roles</SelectItem>
+            <SelectItem value="admin">Admin</SelectItem>
+            <SelectItem value="operator">Operator</SelectItem>
+            <SelectItem value="viewer">Viewer</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select value={fStatus} onValueChange={setFStatus}>
+          <SelectTrigger className="h-8 w-full sm:w-[130px] text-xs">
+            <SelectValue placeholder="Status" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All statuses</SelectItem>
+            <SelectItem value="active">Active</SelectItem>
+            <SelectItem value="inactive">Inactive</SelectItem>
+          </SelectContent>
+        </Select>
+        <div className="col-span-2 sm:col-span-1 flex items-center justify-between sm:justify-start gap-2">
+          {hasFilters && (
+            <Button variant="ghost" size="sm" className="text-xs h-8 gap-1 text-muted-foreground" onClick={clearFilters}>
+              <X className="h-3 w-3" /> Clear
+            </Button>
+          )}
+          <span className="text-xs text-muted-foreground sm:ml-auto">{filteredUsers.length} users</span>
+        </div>
       </div>
 
       {/* Create form */}
@@ -153,9 +230,10 @@ export default function UsersPage() {
               </tr>
             </thead>
             <tbody>
-              {users.map((u: any) => {
+              {filteredUsers.map((u: any) => {
                 const RoleIcon = ROLE_ICONS[u.role] || Eye;
                 const isEditing = editId === u.id;
+                const isSelf = currentUser?.id === u.id;
 
                 return (
                   <tr key={u.id} className="border-b border-border last:border-0">
@@ -169,7 +247,10 @@ export default function UsersPage() {
                           className="px-2 py-1 rounded border border-border bg-background text-sm w-full text-foreground"
                         />
                       ) : (
-                        <span className="text-foreground font-medium">{u.username}</span>
+                        <span className="text-foreground font-medium">
+                          {u.username}
+                          {isSelf && <span className="text-[10px] text-muted-foreground ml-1.5">(you)</span>}
+                        </span>
                       )}
                     </td>
                     <td className="px-4 py-3">
@@ -243,7 +324,9 @@ export default function UsersPage() {
                             size="icon"
                             variant="ghost"
                             className="h-7 w-7 text-red-400 hover:text-red-300"
-                            onClick={() => setDeleteTarget({ id: u.id, name: u.username })}
+                            disabled={isSelf}
+                            title={isSelf ? "Cannot delete yourself" : undefined}
+                            onClick={() => handleDeleteClick(u)}
                           >
                             <Trash2 className="h-3.5 w-3.5" />
                           </Button>
@@ -253,6 +336,13 @@ export default function UsersPage() {
                   </tr>
                 );
               })}
+              {filteredUsers.length === 0 && (
+                <tr>
+                  <td colSpan={5} className="px-4 py-8 text-center text-muted-foreground text-xs">
+                    {hasFilters ? "No users match filters" : "No users"}
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>

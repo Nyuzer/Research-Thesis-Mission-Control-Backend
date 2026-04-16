@@ -1,10 +1,14 @@
 import { useQuery } from "@tanstack/react-query";
 import { fetchMaps, uploadMap, deleteMap } from "../utils/api";
-import { useRef, useState, useEffect, useCallback } from "react";
+import { useRef, useState, useEffect, useCallback, useMemo } from "react";
 import { removeLocalTemplatesForMap, cleanupOrphanTemplates } from "@/utils/localTemplates";
 import ConfirmDeleteDialog from "@/components/ConfirmDeleteDialog";
 import { showToast } from "@/lib/toast";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Calendar } from "@/components/ui/calendar";
+import { format } from "date-fns";
 import {
   Table,
   TableBody,
@@ -14,7 +18,8 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import DataTablePagination from "@/components/DataTablePagination";
-import { Trash2, Upload, X } from "lucide-react";
+import { Trash2, Upload, X, Search, Filter } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 /* Mobile card for a single map row */
 function MapCard({
@@ -89,6 +94,29 @@ export default function MapsPage() {
   >({});
   const [lightbox, setLightbox] = useState<{ src: string; name: string } | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+  const [q, setQ] = useState("");
+  const [dateFrom, setDateFrom] = useState<Date | undefined>(undefined);
+  const [dateTo, setDateTo] = useState<Date | undefined>(undefined);
+
+  const hasFilters = Boolean(q || dateFrom || dateTo);
+  const clearFilters = () => { setQ(""); setDateFrom(undefined); setDateTo(undefined); setPage(0); };
+
+  const filteredMaps = useMemo(() => {
+    const all = data?.maps || [];
+    const from = dateFrom ? dateFrom.getTime() : 0;
+    const to = dateTo ? dateTo.getTime() + 86400000 - 1 : Infinity;
+    return all.filter((m: any) => {
+      if (q) {
+        const text = `${m.mapId} ${m.name || ""}`.toLowerCase();
+        if (!text.includes(q.toLowerCase())) return false;
+      }
+      if (from || to < Infinity) {
+        const t = m.uploadTime ? new Date(m.uploadTime).getTime() : 0;
+        if (t && (t < from || t > to)) return false;
+      }
+      return true;
+    });
+  }, [data, q, dateFrom, dateTo]);
 
   // Cleanup orphaned localStorage templates for deleted maps
   useEffect(() => {
@@ -207,10 +235,47 @@ export default function MapsPage() {
         </Button>
       </div>
 
+      {/* Filters */}
+      <div className="grid grid-cols-2 sm:flex sm:flex-wrap sm:items-center gap-2 mb-3">
+        <div className="relative col-span-2">
+          <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+          <Input
+            placeholder="Search name or ID..."
+            value={q}
+            onChange={(e) => { setQ(e.target.value); setPage(0); }}
+            className="pl-7 h-8 w-full sm:w-[200px] text-xs"
+          />
+        </div>
+        <Popover>
+          <PopoverTrigger className={cn("inline-flex items-center h-8 w-full sm:w-[120px] text-xs font-normal px-3 border rounded-md bg-background shadow-xs hover:bg-accent dark:border-input dark:bg-input/30 dark:hover:bg-input/50", !dateFrom && "text-muted-foreground")}>
+            {dateFrom ? format(dateFrom, "dd.MM.yyyy") : "From"}
+          </PopoverTrigger>
+          <PopoverContent className="w-auto p-0" align="start">
+            <Calendar mode="single" selected={dateFrom} onSelect={(d) => { setDateFrom(d); setPage(0); }} />
+          </PopoverContent>
+        </Popover>
+        <Popover>
+          <PopoverTrigger className={cn("inline-flex items-center h-8 w-full sm:w-[120px] text-xs font-normal px-3 border rounded-md bg-background shadow-xs hover:bg-accent dark:border-input dark:bg-input/30 dark:hover:bg-input/50", !dateTo && "text-muted-foreground")}>
+            {dateTo ? format(dateTo, "dd.MM.yyyy") : "To"}
+          </PopoverTrigger>
+          <PopoverContent className="w-auto p-0" align="start">
+            <Calendar mode="single" selected={dateTo} onSelect={(d) => { setDateTo(d); setPage(0); }} />
+          </PopoverContent>
+        </Popover>
+        <div className="col-span-2 sm:col-span-1 flex items-center justify-between sm:justify-start gap-2">
+          {hasFilters && (
+            <Button variant="ghost" size="sm" className="text-xs h-8 gap-1 text-muted-foreground" onClick={clearFilters}>
+              <X className="h-3 w-3" /> Clear
+            </Button>
+          )}
+          <span className="text-xs text-muted-foreground sm:ml-auto">{filteredMaps.length} maps</span>
+        </div>
+      </div>
+
       {/* Mobile: cards */}
       <div className="space-y-2 md:hidden">
-        {data?.maps
-          ?.slice(page * rows, page * rows + rows)
+        {filteredMaps
+          .slice(page * rows, page * rows + rows)
           .map((m: any) => (
             <MapCard
               key={m.mapId}
@@ -239,8 +304,8 @@ export default function MapsPage() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {data?.maps
-              ?.slice(page * rows, page * rows + rows)
+            {filteredMaps
+              .slice(page * rows, page * rows + rows)
               .map((m: any) => (
                 <TableRow key={m.mapId}>
                   <TableCell>
@@ -288,7 +353,7 @@ export default function MapsPage() {
         </Table>
       </div>
       <DataTablePagination
-        count={data?.maps?.length || 0}
+        count={filteredMaps.length}
         page={page}
         rowsPerPage={rows}
         onPageChange={setPage}

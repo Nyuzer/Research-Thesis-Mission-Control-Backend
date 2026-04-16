@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { DateTimePicker } from "@/components/ui/datetime-picker";
 import { Send, Trash2, Plus, ChevronUp, ChevronDown, X, BookOpen } from "lucide-react";
 
 export default function RightPanel() {
@@ -289,12 +290,7 @@ export default function RightPanel() {
             <Label className="text-[10px] text-muted-foreground uppercase tracking-wider">
               Scheduled Time
             </Label>
-            <Input
-              type="datetime-local"
-              value={scheduledTime}
-              onChange={(e) => setScheduledTime(e.target.value)}
-              className="h-8 text-sm"
-            />
+            <DateTimePicker value={scheduledTime} onChange={setScheduledTime} />
           </div>
           <Button
             className="w-full gap-2"
@@ -480,12 +476,7 @@ export default function RightPanel() {
               <Label className="text-[10px] text-muted-foreground uppercase tracking-wider">
                 Scheduled Time
               </Label>
-              <Input
-                type="datetime-local"
-                value={advScheduledTime}
-                onChange={(e) => setAdvScheduledTime(e.target.value)}
-                className="h-8 text-sm"
-              />
+              <DateTimePicker value={advScheduledTime} onChange={setAdvScheduledTime} />
             </div>
           )}
           {advDispatch === "cron" && (

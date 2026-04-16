@@ -11,6 +11,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Calendar } from "@/components/ui/calendar";
+import { format } from "date-fns";
 import {
   Table,
   TableBody,
@@ -20,7 +24,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import DataTablePagination from "@/components/DataTablePagination";
-import { Trash2, Search, ChevronDown, ChevronRight, Navigation, Timer, ParkingCircle } from "lucide-react";
+import { Trash2, Search, ChevronDown, ChevronRight, Navigation, Timer, ParkingCircle, X, Filter } from "lucide-react";
 import { cn } from "@/lib/utils";
 import ConfirmDeleteDialog from "@/components/ConfirmDeleteDialog";
 
@@ -220,6 +224,11 @@ export default function MissionsPage() {
     queryFn: fetchScheduledMissions,
   });
   const [q, setQ] = useState("");
+  const [fStatus, setFStatus] = useState("all");
+  const [fRobot, setFRobot] = useState("all");
+  const [fType, setFType] = useState("all");
+  const [fDateFrom, setFDateFrom] = useState<Date | undefined>(undefined);
+  const [fDateTo, setFDateTo] = useState<Date | undefined>(undefined);
   const [page0, setPage0] = useState(0);
   const [rows0, setRows0] = useState(10);
   const [page1, setPage1] = useState(0);
@@ -236,18 +245,62 @@ export default function MissionsPage() {
     });
   }, []);
 
-  const filterRows = (rows: any[] = []) =>
-    rows.filter((r) =>
-      JSON.stringify(r).toLowerCase().includes(q.toLowerCase())
-    );
+  const hasFilters = fStatus !== "all" || fRobot !== "all" || fType !== "all" || fDateFrom || fDateTo || q;
+  const clearFilters = () => {
+    setQ(""); setFStatus("all"); setFRobot("all"); setFType("all"); setFDateFrom(undefined); setFDateTo(undefined);
+    setPage0(0); setPage1(0);
+  };
+
+  // Collect unique values for filter dropdowns
+  const allRegular = missionsData?.missions || [];
+  const allScheduled = scheduledData?.missions || [];
+  const robotIds = useMemo(() => {
+    const s = new Set<string>();
+    for (const m of allRegular) if (m.robotId) s.add(m.robotId);
+    for (const m of allScheduled) if (m.robotId) s.add(m.robotId);
+    return [...s].sort();
+  }, [allRegular, allScheduled]);
+  const statusValues = useMemo(() => {
+    const s = new Set<string>();
+    for (const m of allRegular) if (m.status) s.add(m.status);
+    for (const m of allScheduled) if (m.status) s.add(m.status);
+    return [...s].sort();
+  }, [allRegular, allScheduled]);
+
+  const applyFilters = useCallback((rows: any[], type: "regular" | "scheduled") => {
+    const dateFrom = fDateFrom ? fDateFrom.getTime() : 0;
+    const dateTo = fDateTo ? fDateTo.getTime() + 86400000 - 1 : Infinity; // end of day
+
+    return rows.filter((r) => {
+      // Text search
+      if (q && !JSON.stringify(r).toLowerCase().includes(q.toLowerCase())) return false;
+      // Status
+      if (fStatus !== "all" && r.status !== fStatus) return false;
+      // Robot
+      if (fRobot !== "all" && r.robotId !== fRobot) return false;
+      // Mission type (regular only)
+      if (type === "regular" && fType !== "all") {
+        const cmd = r.command?.command || "MOVE_TO";
+        if (fType === "advanced" && cmd !== "ADVANCED") return false;
+        if (fType === "simple" && cmd === "ADVANCED") return false;
+      }
+      // Date range
+      const timeStr = type === "regular" ? r.sentTime : (r.scheduledTime || r.sentTime);
+      if (timeStr && (dateFrom || dateTo < Infinity)) {
+        const t = new Date(timeStr).getTime();
+        if (t < dateFrom || t > dateTo) return false;
+      }
+      return true;
+    });
+  }, [q, fStatus, fRobot, fType, fDateFrom, fDateTo]);
 
   const missions = useMemo(
-    () => filterRows(missionsData?.missions),
-    [missionsData, q]
+    () => applyFilters(allRegular, "regular"),
+    [allRegular, applyFilters]
   );
   const scheduled = useMemo(
-    () => filterRows(scheduledData?.missions),
-    [scheduledData, q]
+    () => applyFilters(allScheduled, "scheduled"),
+    [allScheduled, applyFilters]
   );
 
   const onDeleteConfirmed = useCallback(async () => {
@@ -270,23 +323,82 @@ export default function MissionsPage() {
       <h2 className="text-lg font-semibold mb-3">Mission History</h2>
 
       <Tabs defaultValue="regular">
-        <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3 mb-3">
-          <TabsList className="bg-secondary/50 w-full sm:w-auto">
-            <TabsTrigger value="regular" className="text-xs flex-1 sm:flex-none">
-              Regular ({missions?.length ?? 0})
-            </TabsTrigger>
-            <TabsTrigger value="scheduled" className="text-xs flex-1 sm:flex-none">
-              Scheduled ({scheduled?.length ?? 0})
-            </TabsTrigger>
-          </TabsList>
-          <div className="relative">
-            <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-            <Input
-              placeholder="Search..."
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              className="pl-7 h-8 w-full sm:w-[200px] text-xs"
-            />
+        <div className="flex flex-col gap-2 mb-3">
+          {/* Row 1: Tabs + search */}
+          <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
+            <TabsList className="bg-secondary/50 w-full sm:w-auto">
+              <TabsTrigger value="regular" className="text-xs flex-1 sm:flex-none">
+                Regular ({missions?.length ?? 0})
+              </TabsTrigger>
+              <TabsTrigger value="scheduled" className="text-xs flex-1 sm:flex-none">
+                Scheduled ({scheduled?.length ?? 0})
+              </TabsTrigger>
+            </TabsList>
+            <div className="relative">
+              <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+              <Input
+                placeholder="Search..."
+                value={q}
+                onChange={(e) => { setQ(e.target.value); setPage0(0); setPage1(0); }}
+                className="pl-7 h-8 w-full sm:w-[200px] text-xs"
+              />
+            </div>
+            {hasFilters && (
+              <Button variant="ghost" size="sm" className="text-xs h-8 gap-1 text-muted-foreground" onClick={clearFilters}>
+                <X className="h-3 w-3" /> Clear filters
+              </Button>
+            )}
+          </div>
+          {/* Row 2: Filters */}
+          <div className="grid grid-cols-2 sm:flex sm:flex-wrap sm:items-center gap-2">
+            <Select value={fStatus} onValueChange={(v) => { setFStatus(v); setPage0(0); setPage1(0); }}>
+              <SelectTrigger className="h-8 w-full sm:w-[130px] text-xs">
+                <SelectValue placeholder="Status" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All statuses</SelectItem>
+                {statusValues.map((s) => (
+                  <SelectItem key={s} value={s}>{s}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select value={fRobot} onValueChange={(v) => { setFRobot(v); setPage0(0); setPage1(0); }}>
+              <SelectTrigger className="h-8 w-full sm:w-[160px] text-xs">
+                <SelectValue placeholder="Robot" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All robots</SelectItem>
+                {robotIds.map((r) => (
+                  <SelectItem key={r} value={r}>{r}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select value={fType} onValueChange={(v) => { setFType(v); setPage0(0); setPage1(0); }}>
+              <SelectTrigger className="h-8 w-full sm:w-[130px] text-xs">
+                <SelectValue placeholder="Type" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All types</SelectItem>
+                <SelectItem value="simple">MOVE_TO</SelectItem>
+                <SelectItem value="advanced">Advanced</SelectItem>
+              </SelectContent>
+            </Select>
+            <Popover>
+              <PopoverTrigger className={cn("inline-flex items-center h-8 w-full sm:w-[130px] text-xs justify-start font-normal px-3 border rounded-md bg-background shadow-xs hover:bg-accent dark:border-input dark:bg-input/30 dark:hover:bg-input/50", !fDateFrom && "text-muted-foreground")}>
+                {fDateFrom ? format(fDateFrom, "dd.MM.yyyy") : "From"}
+              </PopoverTrigger>
+              <PopoverContent className="w-auto p-0" align="start">
+                <Calendar mode="single" selected={fDateFrom} onSelect={(d) => { setFDateFrom(d); setPage0(0); setPage1(0); }} />
+              </PopoverContent>
+            </Popover>
+            <Popover>
+              <PopoverTrigger className={cn("inline-flex items-center h-8 w-full sm:w-[130px] text-xs justify-start font-normal px-3 border rounded-md bg-background shadow-xs hover:bg-accent dark:border-input dark:bg-input/30 dark:hover:bg-input/50", !fDateTo && "text-muted-foreground")}>
+                {fDateTo ? format(fDateTo, "dd.MM.yyyy") : "To"}
+              </PopoverTrigger>
+              <PopoverContent className="w-auto p-0" align="start">
+                <Calendar mode="single" selected={fDateTo} onSelect={(d) => { setFDateTo(d); setPage0(0); setPage1(0); }} />
+              </PopoverContent>
+            </Popover>
           </div>
         </div>
 
