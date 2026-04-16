@@ -90,18 +90,24 @@ export async function sendMissionInstant(params: {
 export async function sendMissionScheduled(params: {
   robotId: string;
   mapId: string;
-  x: number;
-  y: number;
+  x?: number;
+  y?: number;
   scheduledTime?: string;
   cron?: string;
+  steps?: any[];
+  name?: string;
 }) {
   const body: any = {
     robotId: params.robotId,
     mapId: params.mapId,
-    destination: { type: "Point", coordinates: [params.x, params.y, 0] },
   };
+  if (params.x != null && params.y != null) {
+    body.destination = { type: "Point", coordinates: [params.x, params.y, 0] };
+  }
   if (params.scheduledTime) body.scheduledTime = params.scheduledTime;
   if (params.cron) body.cron = params.cron;
+  if (params.steps) body.steps = params.steps;
+  if (params.name) body.name = params.name;
   return fetchJSON(`/api/scheduled-missions`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

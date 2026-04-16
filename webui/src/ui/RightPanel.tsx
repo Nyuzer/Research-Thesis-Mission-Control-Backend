@@ -12,6 +12,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Send, Trash2, Plus, ChevronUp, ChevronDown, X, BookOpen } from "lucide-react";
 
 export default function RightPanel() {
@@ -28,11 +29,13 @@ export default function RightPanel() {
   // Advanced mission state
   interface Step { action: string; x?: number; y?: number; duration?: number; zoneId?: string }
   const [advSteps, setAdvSteps] = useState<Step[]>([]);
-  const [advName, setAdvName] = useState("");
   const [advSaveTemplate, setAdvSaveTemplate] = useState(false);
   const [advTemplateName, setAdvTemplateName] = useState("");
   const [templates, setTemplates] = useState<any[]>([]);
   const [parkingZones, setParkingZones] = useState<any[]>([]);
+  const [advDispatch, setAdvDispatch] = useState<"instant" | "scheduled" | "cron">("instant");
+  const [advScheduledTime, setAdvScheduledTime] = useState("");
+  const [advCron, setAdvCron] = useState("");
 
   // Fetch parking zones when mapId changes; clear stale templates & PARK steps
   useEffect(() => {
@@ -84,6 +87,14 @@ export default function RightPanel() {
       showToast("Select robot, map, and add steps", "warning");
       return;
     }
+    if (advDispatch === "scheduled" && !advScheduledTime) {
+      showToast("Provide scheduled time", "warning");
+      return;
+    }
+    if (advDispatch === "cron" && !advCron) {
+      showToast("Provide CRON expression", "warning");
+      return;
+    }
     try {
       const steps = advSteps.map((s, i) => ({
         stepId: `step_${i}`,
@@ -93,20 +104,38 @@ export default function RightPanel() {
         zoneId: s.zoneId || undefined,
         order: i,
       }));
-      await sendAdvancedMission({
-        robotId: robotId!,
-        mapId: mapId!,
-        name: advName || undefined,
-        steps,
-        saveAsTemplate: advSaveTemplate,
-        templateName: advTemplateName || undefined,
-      });
-      if (advSaveTemplate && mapId) {
-        saveLocalTemplate(mapId, advTemplateName || advName || "Untitled", steps);
+
+      if (advDispatch === "instant") {
+        await sendAdvancedMission({
+          robotId: robotId!,
+          mapId: mapId!,
+          name: undefined,
+          steps,
+          saveAsTemplate: advSaveTemplate,
+          templateName: advTemplateName || undefined,
+        });
+        showToast("Advanced mission sent", "success");
+      } else {
+        await sendMissionScheduled({
+          robotId: robotId!,
+          mapId: mapId!,
+          steps,
+          name: undefined,
+          scheduledTime: advDispatch === "scheduled" ? advScheduledTime : undefined,
+          cron: advDispatch === "cron" ? advCron : undefined,
+        });
+        showToast(
+          advDispatch === "scheduled" ? "Advanced mission scheduled" : "Recurring advanced mission created",
+          "success",
+        );
       }
-      showToast("Advanced mission sent", "success");
+
+      if (advSaveTemplate && mapId) {
+        saveLocalTemplate(mapId, advTemplateName || "Untitled", steps);
+      }
       setAdvSteps([]);
-      setAdvName("");
+      setAdvScheduledTime("");
+      setAdvCron("");
       clearPreviewWaypoints();
     } catch (e: any) {
       showToast(e?.message || "Failed to send mission", "error");
@@ -152,7 +181,6 @@ export default function RightPanel() {
       return;
     }
 
-    setAdvName(t.name);
     setAdvSteps(steps);
   };
 
@@ -302,13 +330,6 @@ export default function RightPanel() {
         </TabsContent>
 
         <TabsContent value="advanced" className="mt-3 space-y-3">
-          <Input
-            placeholder="Mission name"
-            value={advName}
-            onChange={(e) => setAdvName(e.target.value)}
-            className="h-8 text-sm"
-          />
-
           {/* Steps list */}
           <div className="space-y-1.5 max-h-48 overflow-y-auto">
             {advSteps.map((step, i) => {
@@ -438,12 +459,56 @@ export default function RightPanel() {
             />
           )}
 
+          {/* Dispatch mode */}
+          <div className="space-y-1.5">
+            <Label className="text-[10px] text-muted-foreground uppercase tracking-wider">
+              Dispatch
+            </Label>
+            <Select value={advDispatch} onValueChange={(v: any) => setAdvDispatch(v)}>
+              <SelectTrigger className="h-8 text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="instant">Instant</SelectItem>
+                <SelectItem value="scheduled">Scheduled</SelectItem>
+                <SelectItem value="cron">CRON (recurring)</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          {advDispatch === "scheduled" && (
+            <div className="space-y-1">
+              <Label className="text-[10px] text-muted-foreground uppercase tracking-wider">
+                Scheduled Time
+              </Label>
+              <Input
+                type="datetime-local"
+                value={advScheduledTime}
+                onChange={(e) => setAdvScheduledTime(e.target.value)}
+                className="h-8 text-sm"
+              />
+            </div>
+          )}
+          {advDispatch === "cron" && (
+            <div className="space-y-1">
+              <Label className="text-[10px] text-muted-foreground uppercase tracking-wider">
+                CRON (m h dom mon dow)
+              </Label>
+              <Input
+                placeholder="0 9 * * *"
+                value={advCron}
+                onChange={(e) => setAdvCron(e.target.value)}
+                className="h-8 text-sm font-mono"
+              />
+            </div>
+          )}
+
           <Button
             className="w-full gap-2"
             disabled={!robotId || !mapId || advSteps.length === 0}
             onClick={onSendAdvanced}
           >
-            <Send className="h-4 w-4" /> Send Advanced Mission
+            <Send className="h-4 w-4" />
+            {advDispatch === "instant" ? "Send Advanced Mission" : advDispatch === "scheduled" ? "Schedule Advanced Mission" : "Create Recurring Mission"}
           </Button>
         </TabsContent>
       </Tabs>

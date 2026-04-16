@@ -508,12 +508,15 @@ class FiwareMqttBridge:
                         self.handle_move_to_command(first['waypoint'], map_id)
                     elif first.get('action') == 'WAIT':
                         dur = first.get('duration', 30)
-                        rospy.loginfo(f"Step 0: WAIT {dur}s")
-                        rospy.sleep(dur)
-                        self.advance_multi_step()
+                        rospy.loginfo(f"Step 0: WAIT {dur}s (non-blocking)")
+                        rospy.Timer(rospy.Duration(dur), lambda e: self.advance_multi_step(), oneshot=True)
                     elif first.get('action') == 'PARK':
-                        rospy.loginfo("Step 0: PARK (idle)")
-                        self.transition_state(RobotState.IDLE, "Parked")
+                        if first.get('waypoint'):
+                            rospy.loginfo("Step 0: PARK (navigating to parking zone)")
+                            self.handle_move_to_command(first['waypoint'], map_id)
+                        else:
+                            rospy.loginfo("Step 0: PARK (no waypoint, advancing)")
+                            self.advance_multi_step()
             elif command_type == "STOP":
                 # For STOP commands, don't create a new mission - work with existing one
                 rospy.loginfo(f"Processing STOP command - keeping existing mission: {self.current_mission.get('missionId') if self.current_mission else 'None'}")
@@ -782,20 +785,32 @@ class FiwareMqttBridge:
         if idx >= len(steps):
             rospy.loginfo("All steps completed")
             self.transition_state(RobotState.MISSION_COMPLETED, "All steps done")
+            import pytz
+            completed_time = datetime.now(pytz.timezone("Europe/Berlin")).isoformat()
+            self.update_mission_status_backend(self.current_mission['missionId'], "completed", completed_time=completed_time)
+            rospy.Timer(rospy.Duration(3.0), self.return_to_idle, oneshot=True)
             return
         step = steps[idx]
         action = step.get('action', '')
         rospy.loginfo(f"Step {idx}: {action}")
         if action == 'MOVE_TO' and step.get('waypoint'):
-            self.handle_move_to_command(step['waypoint'], self.current_mission.get('mapId', ''))
+            # Defer to let action client fully clean up the previous goal
+            rospy.Timer(rospy.Duration(0.5),
+                        lambda e: self.handle_move_to_command(step['waypoint'], self.current_mission.get('mapId', '')),
+                        oneshot=True)
         elif action == 'WAIT':
             dur = step.get('duration', 30)
-            rospy.loginfo(f"WAIT {dur}s")
-            rospy.sleep(dur)
-            self.advance_multi_step()
+            rospy.loginfo(f"WAIT {dur}s (non-blocking)")
+            rospy.Timer(rospy.Duration(dur), lambda e: self.advance_multi_step(), oneshot=True)
         elif action == 'PARK':
-            rospy.loginfo("PARK (idle)")
-            self.transition_state(RobotState.IDLE, "Parked")
+            if step.get('waypoint'):
+                rospy.loginfo(f"PARK: navigating to parking zone waypoint")
+                rospy.Timer(rospy.Duration(0.5),
+                            lambda e: self.handle_move_to_command(step['waypoint'], self.current_mission.get('mapId', '')),
+                            oneshot=True)
+            else:
+                rospy.loginfo("PARK (no waypoint, completing step)")
+                self.advance_multi_step()
 
     def handle_stop_command(self):
         """Handle STOP command - cancel current navigation"""
@@ -841,6 +856,11 @@ class FiwareMqttBridge:
             
             if status == GoalStatus.SUCCEEDED:
                 rospy.loginfo("🎯 Navigation goal SUCCEEDED!")
+                # If this is a multi-step ADVANCED mission, advance to the next step
+                if self.current_mission and self.current_mission.get('command') == 'ADVANCED':
+                    rospy.loginfo("Multi-step mission: advancing to next step")
+                    self.advance_multi_step()
+                    return
                 self.transition_state(RobotState.MISSION_COMPLETED, "Navigation goal achieved successfully")
                 completed_time = datetime.now(pytz.timezone("Europe/Berlin")).isoformat()
                 self.update_mission_status_backend(self.current_mission['missionId'], "completed", completed_time=completed_time)

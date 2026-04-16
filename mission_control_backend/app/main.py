@@ -152,10 +152,13 @@ class Point(BaseModel):
 
 class CommandMessage(BaseModel):
     command: str = "MOVE_TO"
-    commandTime: str
-    waypoints: Point
-    mapId: str
+    commandTime: str = ""
+    waypoints: Optional[Point] = None
+    mapId: str = ""
     missionId: Optional[str] = None
+    # ADVANCED mission fields
+    steps: Optional[list] = None
+    name: Optional[str] = None
 
 class MissionRequest(BaseModel):
     robotId: str
@@ -204,13 +207,20 @@ class ScheduledMission(BaseModel):
     maxRetries: int = 3
     retryCount: int = 0
     lastError: Optional[str] = None
+    # Advanced mission fields (optional)
+    advancedSteps: Optional[list] = None  # Resolved steps for advanced missions
+    missionName: Optional[str] = None
+    missionMapId: Optional[str] = None
 
 class MissionScheduledRequest(BaseModel):
     robotId: str
-    destination: Point
     mapId: str
+    destination: Optional[Point] = None
     scheduledTime: Optional[str] = None  # ISO8601 format for one-time missions
     cron: Optional[str] = None  # Cron expression for recurring missions
+    # Optional advanced mission fields
+    steps: Optional[list] = None  # List of MissionStep dicts for advanced missions
+    name: Optional[str] = None  # Mission name for advanced missions
 
 class RobotInfo(BaseModel):
     robotId: str
@@ -1306,9 +1316,18 @@ async def create_scheduled_mission_entity(scheduled_mission: ScheduledMission):
     
     if scheduled_mission.errorMessage:
         entity["errorMessage"] = {"type": "Property", "value": scheduled_mission.errorMessage}
-    
+
     if scheduled_mission.lastError:
         entity["lastError"] = {"type": "Property", "value": scheduled_mission.lastError}
+
+    if scheduled_mission.advancedSteps:
+        entity["advancedSteps"] = {"type": "StructuredValue", "value": scheduled_mission.advancedSteps}
+
+    if scheduled_mission.missionName:
+        entity["missionName"] = {"type": "Property", "value": scheduled_mission.missionName}
+
+    if scheduled_mission.missionMapId:
+        entity["missionMapId"] = {"type": "Property", "value": scheduled_mission.missionMapId}
     
     # Remove None fields, but keep timestamp fields even if they're None
     # This ensures the fields exist in Orion for later updates
@@ -1375,7 +1394,10 @@ async def get_scheduled_mission_from_orion(mission_id: str):
             max_retries = safe_get_value(entity, "maxRetries", 3)
             retry_count = safe_get_value(entity, "retryCount", 0)
             last_error = safe_get_value(entity, "lastError", None)
-            
+            advanced_steps = safe_get_value(entity, "advancedSteps", None)
+            mission_name = safe_get_value(entity, "missionName", None)
+            mission_map_id = safe_get_value(entity, "missionMapId", None)
+
             return ScheduledMission(
                 robotId=robot_id,
                 command=command,
@@ -1390,7 +1412,10 @@ async def get_scheduled_mission_from_orion(mission_id: str):
                 errorMessage=error_message,
                 maxRetries=max_retries,
                 retryCount=retry_count,
-                lastError=last_error
+                lastError=last_error,
+                advancedSteps=advanced_steps,
+                missionName=mission_name,
+                missionMapId=mission_map_id,
             )
     except Exception as e:
         logger.error(f"Error retrieving scheduled mission from Orion: {str(e)}")
@@ -1440,7 +1465,10 @@ async def list_scheduled_missions_from_orion():
                 max_retries = safe_get_value(entity, "maxRetries", 3)
                 retry_count = safe_get_value(entity, "retryCount", 0)
                 last_error = safe_get_value(entity, "lastError", None)
-                
+                advanced_steps = safe_get_value(entity, "advancedSteps", None)
+                mission_name = safe_get_value(entity, "missionName", None)
+                mission_map_id = safe_get_value(entity, "missionMapId", None)
+
                 missions.append(ScheduledMission(
                     robotId=robot_id,
                     command=command,
@@ -1455,7 +1483,10 @@ async def list_scheduled_missions_from_orion():
                     errorMessage=error_message,
                     maxRetries=max_retries,
                     retryCount=retry_count,
-                    lastError=last_error
+                    lastError=last_error,
+                    advancedSteps=advanced_steps,
+                    missionName=mission_name,
+                    missionMapId=mission_map_id,
                 ))
             return missions
     except Exception as e:
@@ -2052,6 +2083,56 @@ async def send_fiware_command(robot_id: str, command_message: CommandMessage):
         logger.error(f"Unexpected error sending IoT Agent command: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Unexpected error sending command to IoT Agent: {str(e)}")
 
+async def send_fiware_raw_command(robot_id: str, payload_dict: dict):
+    """Send a raw command payload to robot via FIWARE IoT Agent.
+    Unlike send_fiware_command, this accepts an arbitrary dict (e.g. ADVANCED missions)."""
+    if robot_id.startswith("urn:ngsi-ld:Robot:"):
+        entity_id = robot_id
+    elif robot_id.startswith("Robot:"):
+        entity_id = f"urn:ngsi-ld:Robot:{robot_id.split('Robot:',1)[1]}"
+    else:
+        entity_id = f"urn:ngsi-ld:Robot:{robot_id}"
+
+    fiware_payload = {
+        "actionType": "update",
+        "entities": [
+            {
+                "type": "Robot",
+                "id": entity_id,
+                "command": {
+                    "type": "command",
+                    "value": json.dumps(payload_dict)
+                }
+            }
+        ]
+    }
+    headers = {
+        "Content-Type": "application/json",
+        "fiware-service": FIWARE_SERVICE,
+        "fiware-servicepath": FIWARE_SERVICE_PATH
+    }
+    logger.info(f"Sending raw command to IoT Agent for {robot_id}: {payload_dict.get('command', '?')}")
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                FIWARE_IOT_AGENT_URL,
+                json=fiware_payload,
+                headers=headers,
+                timeout=10.0
+            )
+            response.raise_for_status()
+            logger.info(f"IoT Agent raw command response: {response.status_code}")
+            try:
+                return response.json() if response.text.strip() else {"status": "accepted"}
+            except ValueError:
+                return {"status": "accepted", "raw_response": response.text}
+    except (httpx.ConnectError, httpx.TimeoutException, ConnectionError, OSError) as e:
+        logger.error(f"FIWARE IoT Agent not accessible: {e}")
+        raise HTTPException(status_code=503, detail="FIWARE IoT Agent not accessible.")
+    except httpx.HTTPError as e:
+        logger.error(f"HTTP Error sending raw command: {e}")
+        raise HTTPException(status_code=500, detail=f"Error sending command to IoT Agent: {e}")
+
 # Local MQTT Integration
 async def send_local_mqtt_command(robot_id: str, command_message: CommandMessage):
     """Send command to robot via local MQTT broker"""
@@ -2317,6 +2398,32 @@ async def unified_update_mission_status(mission_id: str, update: dict = Body(...
     except Exception as e:
         logger.warning(f"Failed to update regular mission {mission_id}: {e}")
     
+    # Fallback: try direct Orion PATCH (handles advanced missions whose command
+    # structure doesn't match CommandMessage and would fail model validation above)
+    try:
+        entity_id = f"urn:ngsi-ld:Mission:{mission_id}"
+        patch_payload = {
+            "status": {"type": "Text", "value": status}
+        }
+        if "completedTime" in update_payload:
+            patch_payload["completedTime"] = {"type": "Text", "value": convert_to_utc_format(update_payload["completedTime"])}
+        if "executedTime" in update_payload:
+            patch_payload["executedTime"] = {"type": "Text", "value": convert_to_utc_format(update_payload["executedTime"])}
+        if "errorMessage" in update_payload:
+            patch_payload["errorMessage"] = {"type": "Text", "value": update_payload["errorMessage"]}
+        headers = {
+            "Content-Type": "application/json",
+            "fiware-service": FIWARE_SERVICE,
+            "fiware-servicepath": FIWARE_SERVICE_PATH,
+        }
+        async with httpx.AsyncClient() as client:
+            res = await client.patch(f"{FIWARE_ORION_URL}/{entity_id}/attrs", json=patch_payload, headers=headers, timeout=10.0)
+            if res.status_code in (200, 204):
+                logger.info(f"Updated advanced mission {mission_id} status to {status} via direct PATCH")
+                return {"missionId": mission_id, "type": "advanced", "status": status, "message": "Status updated successfully"}
+    except Exception as e:
+        logger.warning(f"Direct PATCH fallback failed for {mission_id}: {e}")
+
     # If we get here, neither mission type was found
     raise HTTPException(status_code=404, detail="Mission not found (neither regular nor scheduled)")
 
@@ -2939,39 +3046,108 @@ async def create_scheduled_mission(request: MissionScheduledRequest = Body(...),
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Validation error: {e}")
 
+    is_advanced = bool(request.steps and len(request.steps) > 0)
+
+    if not is_advanced and not request.destination:
+        raise HTTPException(status_code=400, detail="Either destination or steps must be provided")
+
     # Auto-generate missionId first
-    mission_id = f"mission_{uuid.uuid4().hex[:8]}"
-    
-    # Build CommandMessage as in regular mission
+    mission_id = f"{'adv_sched' if is_advanced else 'mission'}_{uuid.uuid4().hex[:8]}"
+
+    # Build CommandMessage (placeholder for advanced, real for simple)
+    dummy_point = Point(type="Point", coordinates=[0, 0, 0])
     command = CommandMessage(
-        command="MOVE_TO",
+        command="ADVANCED" if is_advanced else "MOVE_TO",
         commandTime=datetime.utcnow().isoformat() + "Z",
-        waypoints=request.destination,
+        waypoints=request.destination or dummy_point,
         mapId=request.mapId,
         missionId=mission_id
     )
-    
+
+    # For advanced missions, resolve steps (PARK → goal point, coordinate transforms)
+    resolved_steps = None
+    if is_advanced:
+        steps_data = []
+        for i, step in enumerate(request.steps):
+            s = step if isinstance(step, dict) else step.dict() if hasattr(step, 'dict') else dict(step)
+            steps_data.append({
+                "stepId": s.get("stepId") or f"step_{i}",
+                "action": s["action"],
+                "waypoint": s.get("waypoint"),
+                "duration": s.get("duration"),
+                "zoneId": s.get("zoneId"),
+                "order": i,
+            })
+        # Resolve PARK steps and transform coordinates (same as create_advanced_mission)
+        resolved_steps = []
+        last_waypoint_coords = None
+        for step_data in steps_data:
+            resolved = dict(step_data)
+            if step_data["action"] == "PARK":
+                zone_id = step_data.get("zoneId")
+                goal_point = None
+                if zone_id:
+                    try:
+                        params = {"type": "Zone", "id": f"urn:ngsi-ld:Zone:{zone_id}"}
+                        read_headers = {"Accept": "application/json", "fiware-service": FIWARE_SERVICE, "fiware-servicepath": FIWARE_SERVICE_PATH}
+                        async with httpx.AsyncClient() as client:
+                            res = await client.get(FIWARE_ORION_URL, params=params, headers=read_headers, timeout=10.0)
+                            if res.status_code == 200:
+                                entities = res.json()
+                                if entities:
+                                    entity = entities[0] if isinstance(entities, list) else entities
+                                    goal_point = _parse_zone_goal_point(entity)
+                    except Exception as e:
+                        logger.warning(f"Failed to fetch zone {zone_id}: {e}")
+                if not goal_point:
+                    zone = await get_cached_parking_zone(request.mapId, last_waypoint_coords)
+                    if zone:
+                        goal_point = zone["goalPoint"]
+                if goal_point:
+                    last_waypoint_coords = goal_point[:2]
+                    try:
+                        lon, lat = transform_epsg_to_wgs84(goal_point[0], goal_point[1])
+                        resolved["waypoint"] = {"type": "Point", "coordinates": [lon, lat, 0]}
+                    except Exception as e:
+                        logger.warning(f"Failed to transform PARK goalPoint: {e}")
+                        resolved["waypoint"] = {"type": "Point", "coordinates": [goal_point[0], goal_point[1], 0]}
+            elif step_data["action"] == "MOVE_TO" and step_data.get("waypoint"):
+                wp = step_data["waypoint"]
+                coords = wp.get("coordinates", [])
+                if len(coords) >= 2:
+                    last_waypoint_coords = coords[:2]
+                if wp.get("type") == "Point" and coords:
+                    try:
+                        lon, lat = transform_epsg_to_wgs84(coords[0], coords[1])
+                        resolved["waypoint"] = {"type": "Point", "coordinates": [lon, lat, 0]}
+                    except Exception as e:
+                        logger.warning(f"Failed to transform step waypoint: {e}")
+            resolved_steps.append(resolved)
+
     # Create scheduled mission based on type
     if schedule_type == "once":
         # One-time mission
         scheduled_time_utc = date_parser.isoparse(schedule_value).astimezone(pytz.UTC)
-        
+
         # Check if scheduledTime is in the past or now
         now_utc = datetime.utcnow().replace(tzinfo=pytz.UTC)
         if scheduled_time_utc <= now_utc:
             raise HTTPException(status_code=400, detail="Cannot schedule a mission in the past or for a time that is already in progress.")
-        
+
         scheduled_mission = ScheduledMission(
             robotId=request.robotId,
             command=command,
             scheduledTime=schedule_value,
             scheduleType="once",
-            estimatedDuration=300,  # Default 5 min, can be adjusted
+            estimatedDuration=300,
             status="scheduled",
             sentTime=None,
             executedTime=None,
             completedTime=None,
-            errorMessage=None
+            errorMessage=None,
+            advancedSteps=resolved_steps,
+            missionName=request.name,
+            missionMapId=request.mapId if is_advanced else None,
         )
     else:
         # Recurring mission
@@ -2980,12 +3156,15 @@ async def create_scheduled_mission(request: MissionScheduledRequest = Body(...),
             command=command,
             cron=schedule_value,
             scheduleType="recurring",
-            estimatedDuration=300,  # Default 5 min, can be adjusted
+            estimatedDuration=300,
             status="scheduled",
             sentTime=None,
             executedTime=None,
             completedTime=None,
-            errorMessage=None
+            errorMessage=None,
+            advancedSteps=resolved_steps,
+            missionName=request.name,
+            missionMapId=request.mapId if is_advanced else None,
         )
     
     # Conflict detection (for both one-time and recurring missions)
@@ -3217,8 +3396,20 @@ async def _execute_scheduled_mission_async(mission_id: str):
                 return
         
         # Send to robot (non-blocking)
-        await send_fiware_command(mission.robotId, mission.command)
-        robot_last_map[mission.robotId] = mission.command.mapId
+        if mission.advancedSteps:
+            # Advanced mission — send ADVANCED command via raw payload
+            from datetime import datetime as dt
+            command_payload = {
+                "command": "ADVANCED",
+                "commandTime": dt.utcnow().isoformat() + "Z",
+                "steps": mission.advancedSteps,
+                "mapId": mission.missionMapId or mission.command.mapId,
+                "missionId": mission.command.missionId,
+            }
+            await send_fiware_raw_command(mission.robotId, command_payload)
+        else:
+            await send_fiware_command(mission.robotId, mission.command)
+        robot_last_map[mission.robotId] = mission.missionMapId or mission.command.mapId
 
         # Update sentTime to record when mission was sent
         from datetime import datetime
@@ -3826,23 +4017,69 @@ async def create_advanced_mission(
             "order": i,
         })
 
-    # Send first step to robot immediately
-    first_step = request.steps[0]
-    if first_step.action == "MOVE_TO" and first_step.waypoint:
-        command_message = CommandMessage(
-            command="MOVE_TO",
-            commandTime=now + "Z",
-            waypoints=first_step.waypoint,
-            mapId=request.mapId,
-            missionId=mission_id,
-        )
-        try:
-            fiware_response = await send_fiware_command(request.robotId, command_message)
-            robot_last_map[request.robotId] = request.mapId
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Failed to send first step: {e}")
-    else:
-        fiware_response = None
+    # Resolve PARK steps to MOVE_TO waypoints and transform coordinates
+    resolved_steps = []
+    last_waypoint_coords = None  # track last known position for nearest-zone resolution
+    for step_data in steps_data:
+        resolved = dict(step_data)
+        if step_data["action"] == "PARK":
+            zone_id = step_data.get("zoneId")
+            goal_point = None
+            if zone_id:
+                # Fetch specific zone's goal point
+                try:
+                    params = {"type": "Zone", "id": f"urn:ngsi-ld:Zone:{zone_id}"}
+                    read_headers = {"Accept": "application/json", "fiware-service": FIWARE_SERVICE, "fiware-servicepath": FIWARE_SERVICE_PATH}
+                    async with httpx.AsyncClient() as client:
+                        res = await client.get(FIWARE_ORION_URL, params=params, headers=read_headers, timeout=10.0)
+                        if res.status_code == 200:
+                            entities = res.json()
+                            if entities:
+                                entity = entities[0] if isinstance(entities, list) else entities
+                                goal_point = _parse_zone_goal_point(entity)
+                except Exception as e:
+                    logger.warning(f"Failed to fetch zone {zone_id}: {e}")
+            if not goal_point:
+                # Use nearest/default parking zone
+                zone = await get_cached_parking_zone(request.mapId, last_waypoint_coords)
+                if zone:
+                    goal_point = zone["goalPoint"]
+            if goal_point:
+                last_waypoint_coords = goal_point[:2]
+                # Transform PARK goalPoint from EPSG:25832 to WGS84
+                try:
+                    lon, lat = transform_epsg_to_wgs84(goal_point[0], goal_point[1])
+                    resolved["waypoint"] = {"type": "Point", "coordinates": [lon, lat, 0]}
+                except Exception as e:
+                    logger.warning(f"Failed to transform PARK goalPoint: {e}")
+                    resolved["waypoint"] = {"type": "Point", "coordinates": [goal_point[0], goal_point[1], 0]}
+        elif step_data["action"] == "MOVE_TO" and step_data.get("waypoint"):
+            wp = step_data["waypoint"]
+            coords = wp.get("coordinates", [])
+            if len(coords) >= 2:
+                last_waypoint_coords = coords[:2]
+            # Transform coordinates to WGS84 for the bridge
+            if wp.get("type") == "Point" and coords:
+                try:
+                    lon, lat = transform_epsg_to_wgs84(coords[0], coords[1])
+                    resolved["waypoint"] = {"type": "Point", "coordinates": [lon, lat, 0]}
+                except Exception as e:
+                    logger.warning(f"Failed to transform step waypoint: {e}")
+        resolved_steps.append(resolved)
+
+    # Send full ADVANCED command to robot via FIWARE
+    command_payload = {
+        "command": "ADVANCED",
+        "commandTime": now + "Z",
+        "steps": resolved_steps,
+        "mapId": request.mapId,
+        "missionId": mission_id,
+    }
+    try:
+        fiware_response = await send_fiware_raw_command(request.robotId, command_payload)
+        robot_last_map[request.robotId] = request.mapId
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to send advanced mission: {e}")
 
     # Store multi-step mission as entity in Orion
     entity = {

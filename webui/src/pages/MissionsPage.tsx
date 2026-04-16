@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { useMemo, useState, useCallback } from "react";
+import { useMemo, useState, useCallback, Fragment } from "react";
 import {
   deleteMission,
   deleteScheduledMission,
@@ -20,7 +20,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import DataTablePagination from "@/components/DataTablePagination";
-import { Trash2, Search } from "lucide-react";
+import { Trash2, Search, ChevronDown, ChevronRight, Navigation, Timer, ParkingCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import ConfirmDeleteDialog from "@/components/ConfirmDeleteDialog";
 
@@ -34,74 +34,181 @@ function statusColor(status: string) {
   return "bg-muted text-muted-foreground border-border";
 }
 
-/* Mobile card for a single mission row */
-function MissionCard({ m, onDelete }: { m: any; onDelete: () => void }) {
-  const id = m.command?.missionId || m.missionId;
+/* ── Step details components ── */
+
+const ACTION_ICON = { MOVE_TO: Navigation, WAIT: Timer, PARK: ParkingCircle } as const;
+const ACTION_COLOR = { MOVE_TO: "text-blue-400", WAIT: "text-amber-400", PARK: "text-emerald-400" } as const;
+
+function StepList({ steps }: { steps: any[] }) {
   return (
-    <div className="border border-border rounded-lg p-3 space-y-2 bg-card">
-      <div className="flex items-center justify-between">
-        <span className="text-xs font-mono text-muted-foreground truncate max-w-[200px]">{id}</span>
-        <div className="flex items-center gap-2">
-          <Badge variant="outline" className={cn("text-[10px]", statusColor(m.status))}>
-            {m.status}
-          </Badge>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-7 w-7 text-muted-foreground hover:text-destructive"
-            onClick={onDelete}
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-          </Button>
-        </div>
-      </div>
-      <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
-        <span className="text-muted-foreground">Robot</span>
-        <span>{m.robotId}</span>
-        <span className="text-muted-foreground">Map</span>
-        <span>{m.command?.mapId || m.mapId}</span>
-        <span className="text-muted-foreground">Sent</span>
-        <span className="font-mono text-muted-foreground">{m.sentTime || "\u2014"}</span>
-        <span className="text-muted-foreground">Done</span>
-        <span className="font-mono text-muted-foreground">{m.completedTime || "\u2014"}</span>
-      </div>
+    <div className="space-y-0.5 py-1.5 px-2">
+      {steps.map((step: any, i: number) => {
+        const Icon = ACTION_ICON[step.action as keyof typeof ACTION_ICON] || Navigation;
+        const color = ACTION_COLOR[step.action as keyof typeof ACTION_COLOR] || "text-muted-foreground";
+        const coords = step.waypoint?.coordinates;
+        return (
+          <div key={step.stepId || i} className="flex items-center gap-1.5 py-0.5">
+            <span className="text-[10px] text-muted-foreground/50 w-4 text-right tabular-nums">{i + 1}.</span>
+            <Icon className={cn("h-3 w-3 shrink-0", color)} />
+            <span className="text-xs text-muted-foreground">
+              <span className="font-medium text-foreground/80">{step.action}</span>
+              {step.action === "MOVE_TO" && coords && (
+                <span className="font-mono ml-1.5">({coords[0]?.toFixed(5)}, {coords[1]?.toFixed(5)})</span>
+              )}
+              {step.action === "WAIT" && step.duration != null && (
+                <span className="ml-1.5">{step.duration}s</span>
+              )}
+              {step.action === "PARK" && step.zoneId && (
+                <span className="ml-1.5">zone: {step.zoneId}</span>
+              )}
+              {step.action === "PARK" && !step.zoneId && (
+                <span className="ml-1.5 text-muted-foreground/50">nearest</span>
+              )}
+            </span>
+          </div>
+        );
+      })}
     </div>
   );
 }
 
-function ScheduledCard({ m, onDelete }: { m: any; onDelete: () => void }) {
-  const id = m.command?.missionId || m.missionId;
+function MissionStepDetails({ m, type }: { m: any; type: "regular" | "scheduled" }) {
+  const cmd = m.command || {};
+  const isAdvanced = cmd.command === "ADVANCED";
+
+  if (isAdvanced) {
+    const steps = type === "scheduled" ? (m.advancedSteps || cmd.steps) : cmd.steps;
+    if (!steps || steps.length === 0)
+      return <p className="text-xs text-muted-foreground/50 italic px-2 py-2">No step details</p>;
+    return <StepList steps={steps} />;
+  }
+
+  // Simple MOVE_TO
+  const coords = cmd.waypoints?.coordinates;
+  if (!coords || (coords[0] === 0 && coords[1] === 0))
+    return <p className="text-xs text-muted-foreground/50 italic px-2 py-2">No destination details</p>;
   return (
-    <div className="border border-border rounded-lg p-3 space-y-2 bg-card">
-      <div className="flex items-center justify-between">
-        <span className="text-xs font-mono text-muted-foreground truncate max-w-[200px]">{id}</span>
-        <div className="flex items-center gap-2">
-          <Badge variant="outline" className={cn("text-[10px]", statusColor(m.status))}>
-            {m.status}
-          </Badge>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-7 w-7 text-muted-foreground hover:text-destructive"
-            onClick={onDelete}
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-          </Button>
-        </div>
-      </div>
-      <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
-        <span className="text-muted-foreground">Robot</span>
-        <span>{m.robotId}</span>
-        <span className="text-muted-foreground">Map</span>
-        <span>{m.command?.mapId || m.mapId}</span>
-        <span className="text-muted-foreground">Type</span>
-        <span>{m.cron ? "CRON" : "Once"}</span>
-        <span className="text-muted-foreground">Scheduled</span>
-        <span className="font-mono text-muted-foreground">{m.scheduledTime || m.cron || "\u2014"}</span>
-      </div>
+    <div className="flex items-center gap-1.5 px-2 py-2">
+      <Navigation className="h-3 w-3 text-blue-400 shrink-0" />
+      <span className="text-xs">
+        <span className="font-medium text-foreground/80">MOVE_TO</span>
+        <span className="font-mono ml-1.5 text-muted-foreground">({coords[0]?.toFixed(5)}, {coords[1]?.toFixed(5)})</span>
+      </span>
     </div>
   );
 }
+
+function hasStepDetails(m: any): boolean {
+  const cmd = m.command || {};
+  if (cmd.command === "ADVANCED") return true;
+  const coords = cmd.waypoints?.coordinates;
+  return Boolean(coords && !(coords[0] === 0 && coords[1] === 0));
+}
+
+function missionTypeBadge(m: any) {
+  const cmd = m.command || {};
+  if (cmd.command === "ADVANCED") {
+    const count = cmd.steps?.length || m.advancedSteps?.length || 0;
+    return (
+      <span className="text-[9px] px-1 py-0 rounded bg-purple-500/15 text-purple-400 border border-purple-500/20 leading-relaxed ml-1">
+        ADV {count}
+      </span>
+    );
+  }
+  return null;
+}
+
+/* ── Mobile cards ── */
+
+function MissionCard({ m, onDelete, expanded, onToggle }: { m: any; onDelete: () => void; expanded: boolean; onToggle: () => void }) {
+  const id = m.command?.missionId || m.missionId;
+  const expandable = hasStepDetails(m);
+  return (
+    <div className="border border-border rounded-lg bg-card">
+      <div className="p-3 space-y-2 cursor-pointer" onClick={expandable ? onToggle : undefined}>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-1">
+            {expandable && (expanded
+              ? <ChevronDown className="h-3 w-3 text-muted-foreground/60 shrink-0" />
+              : <ChevronRight className="h-3 w-3 text-muted-foreground/60 shrink-0" />
+            )}
+            <span className="text-xs font-mono text-muted-foreground truncate max-w-[180px]">{id}</span>
+            {missionTypeBadge(m)}
+          </div>
+          <div className="flex items-center gap-2">
+            <Badge variant="outline" className={cn("text-[10px]", statusColor(m.status))}>
+              {m.status}
+            </Badge>
+            <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive" onClick={(e) => { e.stopPropagation(); onDelete(); }}>
+              <Trash2 className="h-3.5 w-3.5" />
+            </Button>
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+          <span className="text-muted-foreground">Robot</span>
+          <span>{m.robotId}</span>
+          <span className="text-muted-foreground">Map</span>
+          <span>{m.command?.mapId || m.mapId}</span>
+          <span className="text-muted-foreground">Sent</span>
+          <span className="font-mono text-muted-foreground">{m.sentTime || "\u2014"}</span>
+          <span className="text-muted-foreground">Done</span>
+          <span className="font-mono text-muted-foreground">{m.completedTime || "\u2014"}</span>
+        </div>
+      </div>
+      {expanded && (
+        <div className="border-t border-border bg-secondary/20">
+          <MissionStepDetails m={m} type="regular" />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ScheduledCard({ m, onDelete, expanded, onToggle }: { m: any; onDelete: () => void; expanded: boolean; onToggle: () => void }) {
+  const id = m.command?.missionId || m.missionId;
+  const expandable = hasStepDetails(m) || Boolean(m.advancedSteps?.length);
+  return (
+    <div className="border border-border rounded-lg bg-card">
+      <div className="p-3 space-y-2 cursor-pointer" onClick={expandable ? onToggle : undefined}>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-1">
+            {expandable && (expanded
+              ? <ChevronDown className="h-3 w-3 text-muted-foreground/60 shrink-0" />
+              : <ChevronRight className="h-3 w-3 text-muted-foreground/60 shrink-0" />
+            )}
+            <span className="text-xs font-mono text-muted-foreground truncate max-w-[180px]">{id}</span>
+            {missionTypeBadge(m)}
+          </div>
+          <div className="flex items-center gap-2">
+            <Badge variant="outline" className={cn("text-[10px]", statusColor(m.status))}>
+              {m.status}
+            </Badge>
+            <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive" onClick={(e) => { e.stopPropagation(); onDelete(); }}>
+              <Trash2 className="h-3.5 w-3.5" />
+            </Button>
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+          <span className="text-muted-foreground">Robot</span>
+          <span>{m.robotId}</span>
+          <span className="text-muted-foreground">Map</span>
+          <span>{m.command?.mapId || m.mapId}</span>
+          <span className="text-muted-foreground">Type</span>
+          <span>{m.cron ? "CRON" : "Once"}</span>
+          <span className="text-muted-foreground">Scheduled</span>
+          <span className="font-mono text-muted-foreground">{m.scheduledTime || m.cron || "\u2014"}</span>
+        </div>
+      </div>
+      {expanded && (
+        <div className="border-t border-border bg-secondary/20">
+          <MissionStepDetails m={m} type="scheduled" />
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ── Main page ── */
 
 export default function MissionsPage() {
   const { data: missionsData, refetch: refetchMissions } = useQuery({
@@ -118,6 +225,16 @@ export default function MissionsPage() {
   const [page1, setPage1] = useState(0);
   const [rows1, setRows1] = useState(10);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; type: "regular" | "scheduled" } | null>(null);
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+
+  const toggleExpand = useCallback((id: string) => {
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
 
   const filterRows = (rows: any[] = []) =>
     rows.filter((r) =>
@@ -149,7 +266,7 @@ export default function MissionsPage() {
   }, [deleteTarget, refetchMissions, refetchScheduled]);
 
   return (
-    <div className="p-3 sm:p-4 max-w-7xl mx-auto">
+    <div className="p-3 sm:p-4 max-w-7xl mx-auto overflow-auto h-full">
       <h2 className="text-lg font-semibold mb-3">Mission History</h2>
 
       <Tabs defaultValue="regular">
@@ -179,24 +296,25 @@ export default function MissionsPage() {
           <div className="space-y-2 md:hidden">
             {missions
               ?.slice(page0 * rows0, page0 * rows0 + rows0)
-              .map((m: any) => (
-                <MissionCard
-                  key={m.command?.missionId || m.missionId}
-                  m={m}
-                  onDelete={() =>
-                    setDeleteTarget({
-                      id: m.command?.missionId || m.missionId,
-                      type: "regular",
-                    })
-                  }
-                />
-              ))}
+              .map((m: any) => {
+                const id = m.command?.missionId || m.missionId;
+                return (
+                  <MissionCard
+                    key={id}
+                    m={m}
+                    expanded={expandedIds.has(id)}
+                    onToggle={() => toggleExpand(id)}
+                    onDelete={() => setDeleteTarget({ id, type: "regular" })}
+                  />
+                );
+              })}
           </div>
           {/* Desktop: table */}
           <div className="hidden md:block rounded-md border border-border">
             <Table>
               <TableHeader>
                 <TableRow className="hover:bg-transparent">
+                  <TableHead className="text-xs w-8"></TableHead>
                   <TableHead className="text-xs">ID</TableHead>
                   <TableHead className="text-xs">Robot</TableHead>
                   <TableHead className="text-xs">Map</TableHead>
@@ -210,49 +328,57 @@ export default function MissionsPage() {
               <TableBody>
                 {missions
                   ?.slice(page0 * rows0, page0 * rows0 + rows0)
-                  .map((m: any) => (
-                    <TableRow key={m.command?.missionId || m.missionId}>
-                      <TableCell className="text-xs font-mono">
-                        {m.command?.missionId || m.missionId}
-                      </TableCell>
-                      <TableCell className="text-xs">{m.robotId}</TableCell>
-                      <TableCell className="text-xs">
-                        {m.command?.mapId || m.mapId}
-                      </TableCell>
-                      <TableCell>
-                        <Badge
-                          variant="outline"
-                          className={cn("text-[10px]", statusColor(m.status))}
+                  .map((m: any) => {
+                    const id = m.command?.missionId || m.missionId;
+                    const isExpanded = expandedIds.has(id);
+                    const expandable = hasStepDetails(m);
+                    return (
+                      <Fragment key={id}>
+                        <TableRow
+                          className={cn(expandable && "cursor-pointer")}
+                          onClick={expandable ? () => toggleExpand(id) : undefined}
                         >
-                          {m.status}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-xs font-mono text-muted-foreground">
-                        {m.sentTime || "\u2014"}
-                      </TableCell>
-                      <TableCell className="text-xs font-mono text-muted-foreground">
-                        {m.executedTime || "\u2014"}
-                      </TableCell>
-                      <TableCell className="text-xs font-mono text-muted-foreground">
-                        {m.completedTime || "\u2014"}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-7 w-7 text-muted-foreground hover:text-destructive"
-                          onClick={() =>
-                            setDeleteTarget({
-                              id: m.command?.missionId || m.missionId,
-                              type: "regular",
-                            })
-                          }
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))}
+                          <TableCell className="w-8 px-2">
+                            {expandable && (isExpanded
+                              ? <ChevronDown className="h-3.5 w-3.5 text-muted-foreground/60" />
+                              : <ChevronRight className="h-3.5 w-3.5 text-muted-foreground/60" />
+                            )}
+                          </TableCell>
+                          <TableCell className="text-xs font-mono">
+                            <span className="flex items-center gap-1">
+                              {id}{missionTypeBadge(m)}
+                            </span>
+                          </TableCell>
+                          <TableCell className="text-xs">{m.robotId}</TableCell>
+                          <TableCell className="text-xs">{m.command?.mapId || m.mapId}</TableCell>
+                          <TableCell>
+                            <Badge variant="outline" className={cn("text-[10px]", statusColor(m.status))}>
+                              {m.status}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-xs font-mono text-muted-foreground">{m.sentTime || "\u2014"}</TableCell>
+                          <TableCell className="text-xs font-mono text-muted-foreground">{m.executedTime || "\u2014"}</TableCell>
+                          <TableCell className="text-xs font-mono text-muted-foreground">{m.completedTime || "\u2014"}</TableCell>
+                          <TableCell className="text-right">
+                            <Button
+                              variant="ghost" size="icon"
+                              className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                              onClick={(e) => { e.stopPropagation(); setDeleteTarget({ id, type: "regular" }); }}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                        {isExpanded && (
+                          <TableRow className="hover:bg-transparent">
+                            <TableCell colSpan={9} className="p-0 bg-secondary/20">
+                              <MissionStepDetails m={m} type="regular" />
+                            </TableCell>
+                          </TableRow>
+                        )}
+                      </Fragment>
+                    );
+                  })}
               </TableBody>
             </Table>
           </div>
@@ -261,10 +387,7 @@ export default function MissionsPage() {
             page={page0}
             rowsPerPage={rows0}
             onPageChange={setPage0}
-            onRowsPerPageChange={(r) => {
-              setRows0(r);
-              setPage0(0);
-            }}
+            onRowsPerPageChange={(r) => { setRows0(r); setPage0(0); }}
           />
         </TabsContent>
 
@@ -274,24 +397,25 @@ export default function MissionsPage() {
           <div className="space-y-2 md:hidden">
             {scheduled
               ?.slice(page1 * rows1, page1 * rows1 + rows1)
-              .map((m: any) => (
-                <ScheduledCard
-                  key={m.command?.missionId || m.missionId}
-                  m={m}
-                  onDelete={() =>
-                    setDeleteTarget({
-                      id: m.command?.missionId || m.missionId,
-                      type: "scheduled",
-                    })
-                  }
-                />
-              ))}
+              .map((m: any) => {
+                const id = m.command?.missionId || m.missionId;
+                return (
+                  <ScheduledCard
+                    key={id}
+                    m={m}
+                    expanded={expandedIds.has(id)}
+                    onToggle={() => toggleExpand(id)}
+                    onDelete={() => setDeleteTarget({ id, type: "scheduled" })}
+                  />
+                );
+              })}
           </div>
           {/* Desktop: table */}
           <div className="hidden md:block rounded-md border border-border">
             <Table>
               <TableHeader>
                 <TableRow className="hover:bg-transparent">
+                  <TableHead className="text-xs w-8"></TableHead>
                   <TableHead className="text-xs">ID</TableHead>
                   <TableHead className="text-xs">Robot</TableHead>
                   <TableHead className="text-xs">Map</TableHead>
@@ -306,52 +430,58 @@ export default function MissionsPage() {
               <TableBody>
                 {scheduled
                   ?.slice(page1 * rows1, page1 * rows1 + rows1)
-                  .map((m: any) => (
-                    <TableRow key={m.command?.missionId || m.missionId}>
-                      <TableCell className="text-xs font-mono">
-                        {m.command?.missionId || m.missionId}
-                      </TableCell>
-                      <TableCell className="text-xs">{m.robotId}</TableCell>
-                      <TableCell className="text-xs">
-                        {m.command?.mapId || m.mapId}
-                      </TableCell>
-                      <TableCell className="text-xs">
-                        {m.cron ? "CRON" : "Once"}
-                      </TableCell>
-                      <TableCell>
-                        <Badge
-                          variant="outline"
-                          className={cn("text-[10px]", statusColor(m.status))}
+                  .map((m: any) => {
+                    const id = m.command?.missionId || m.missionId;
+                    const isExpanded = expandedIds.has(id);
+                    const expandable = hasStepDetails(m) || Boolean(m.advancedSteps?.length);
+                    return (
+                      <Fragment key={id}>
+                        <TableRow
+                          className={cn(expandable && "cursor-pointer")}
+                          onClick={expandable ? () => toggleExpand(id) : undefined}
                         >
-                          {m.status}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-xs font-mono text-muted-foreground">
-                        {m.scheduledTime || m.cron || "\u2014"}
-                      </TableCell>
-                      <TableCell className="text-xs font-mono text-muted-foreground">
-                        {m.executedTime || "\u2014"}
-                      </TableCell>
-                      <TableCell className="text-xs font-mono text-muted-foreground">
-                        {m.completedTime || "\u2014"}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-7 w-7 text-muted-foreground hover:text-destructive"
-                          onClick={() =>
-                            setDeleteTarget({
-                              id: m.command?.missionId || m.missionId,
-                              type: "scheduled",
-                            })
-                          }
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))}
+                          <TableCell className="w-8 px-2">
+                            {expandable && (isExpanded
+                              ? <ChevronDown className="h-3.5 w-3.5 text-muted-foreground/60" />
+                              : <ChevronRight className="h-3.5 w-3.5 text-muted-foreground/60" />
+                            )}
+                          </TableCell>
+                          <TableCell className="text-xs font-mono">
+                            <span className="flex items-center gap-1">
+                              {id}{missionTypeBadge(m)}
+                            </span>
+                          </TableCell>
+                          <TableCell className="text-xs">{m.robotId}</TableCell>
+                          <TableCell className="text-xs">{m.command?.mapId || m.mapId}</TableCell>
+                          <TableCell className="text-xs">{m.cron ? "CRON" : "Once"}</TableCell>
+                          <TableCell>
+                            <Badge variant="outline" className={cn("text-[10px]", statusColor(m.status))}>
+                              {m.status}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-xs font-mono text-muted-foreground">{m.scheduledTime || m.cron || "\u2014"}</TableCell>
+                          <TableCell className="text-xs font-mono text-muted-foreground">{m.executedTime || "\u2014"}</TableCell>
+                          <TableCell className="text-xs font-mono text-muted-foreground">{m.completedTime || "\u2014"}</TableCell>
+                          <TableCell className="text-right">
+                            <Button
+                              variant="ghost" size="icon"
+                              className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                              onClick={(e) => { e.stopPropagation(); setDeleteTarget({ id, type: "scheduled" }); }}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                        {isExpanded && (
+                          <TableRow className="hover:bg-transparent">
+                            <TableCell colSpan={10} className="p-0 bg-secondary/20">
+                              <MissionStepDetails m={m} type="scheduled" />
+                            </TableCell>
+                          </TableRow>
+                        )}
+                      </Fragment>
+                    );
+                  })}
               </TableBody>
             </Table>
           </div>
@@ -360,10 +490,7 @@ export default function MissionsPage() {
             page={page1}
             rowsPerPage={rows1}
             onPageChange={setPage1}
-            onRowsPerPageChange={(r) => {
-              setRows1(r);
-              setPage1(0);
-            }}
+            onRowsPerPageChange={(r) => { setRows1(r); setPage1(0); }}
           />
         </TabsContent>
       </Tabs>
