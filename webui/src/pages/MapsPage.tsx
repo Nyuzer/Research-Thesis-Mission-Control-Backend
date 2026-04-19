@@ -20,6 +20,7 @@ import {
 import DataTablePagination from "@/components/DataTablePagination";
 import { Trash2, Upload, X, Search, Filter } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useAuthStore } from "@/utils/auth";
 
 /* Mobile card for a single map row */
 function MapCard({
@@ -28,12 +29,14 @@ function MapCard({
   onImgLoad,
   onImageClick,
   onDelete,
+  canDelete,
 }: {
   m: any;
   imgMeta: Record<string, { w: number; h: number }>;
   onImgLoad: (mapId: string, ev: React.SyntheticEvent<HTMLImageElement>) => void;
   onImageClick: (src: string, name: string) => void;
   onDelete: () => void;
+  canDelete: boolean;
 }) {
   return (
     <div className="border border-border rounded-lg p-3 bg-card space-y-2">
@@ -48,14 +51,16 @@ function MapCard({
         <div className="flex-1 min-w-0">
           <div className="flex items-center justify-between">
             <span className="text-sm font-medium truncate">{m.name || m.mapId}</span>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-7 w-7 text-muted-foreground hover:text-destructive shrink-0"
-              onClick={onDelete}
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-            </Button>
+            {canDelete && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7 text-muted-foreground hover:text-destructive shrink-0"
+                onClick={onDelete}
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </Button>
+            )}
           </div>
           <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-xs mt-1">
             <span className="text-muted-foreground">Resolution</span>
@@ -80,6 +85,8 @@ function MapCard({
 }
 
 export default function MapsPage() {
+  const userRole = useAuthStore((s) => s.user?.role);
+  const canEdit = userRole !== "viewer";
   const { data, refetch } = useQuery({
     queryKey: ["maps"],
     queryFn: fetchMaps,
@@ -199,41 +206,43 @@ export default function MapsPage() {
     <div className="p-3 sm:p-4 max-w-7xl mx-auto overflow-auto h-full">
       <h2 className="text-lg font-semibold mb-3">Maps Manager</h2>
 
-      <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 mb-4">
-        <Button
-          variant="outline"
-          size="sm"
-          className="gap-1.5"
-          onClick={() => yamlRef.current?.click()}
-        >
-          <Upload className="h-3.5 w-3.5" />
-          Choose YAML
-        </Button>
-        <input
-          ref={yamlRef}
-          type="file"
-          accept=".yaml"
-          className="hidden"
-        />
-        <Button
-          variant="outline"
-          size="sm"
-          className="gap-1.5"
-          onClick={() => imgRef.current?.click()}
-        >
-          <Upload className="h-3.5 w-3.5" />
-          Choose PNG/PGM
-        </Button>
-        <input
-          ref={imgRef}
-          type="file"
-          accept=".png,.pgm"
-          className="hidden"
-        />
-        <Button size="sm" onClick={onUpload} disabled={uploading}>
-          {uploading ? "Uploading..." : "Upload"}
-        </Button>
-      </div>
+      {canEdit && (
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 mb-4">
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-1.5"
+            onClick={() => yamlRef.current?.click()}
+          >
+            <Upload className="h-3.5 w-3.5" />
+            Choose YAML
+          </Button>
+          <input
+            ref={yamlRef}
+            type="file"
+            accept=".yaml"
+            className="hidden"
+          />
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-1.5"
+            onClick={() => imgRef.current?.click()}
+          >
+            <Upload className="h-3.5 w-3.5" />
+            Choose PNG/PGM
+          </Button>
+          <input
+            ref={imgRef}
+            type="file"
+            accept=".png,.pgm"
+            className="hidden"
+          />
+          <Button size="sm" onClick={onUpload} disabled={uploading}>
+            {uploading ? "Uploading..." : "Upload"}
+          </Button>
+        </div>
+      )}
 
       {/* Filters */}
       <div className="grid grid-cols-2 sm:flex sm:flex-wrap sm:items-center gap-2 mb-3">
@@ -284,6 +293,7 @@ export default function MapsPage() {
               onImgLoad={handleImgLoad}
               onImageClick={openLightbox}
               onDelete={() => setDeleteTarget(m.mapId)}
+              canDelete={canEdit}
             />
           ))}
       </div>
@@ -300,7 +310,7 @@ export default function MapsPage() {
               <TableHead className="text-xs">Size (px)</TableHead>
               <TableHead className="text-xs">Origin</TableHead>
               <TableHead className="text-xs">Uploaded</TableHead>
-              <TableHead className="text-xs text-right">Actions</TableHead>
+              {canEdit && <TableHead className="text-xs text-right">Actions</TableHead>}
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -337,16 +347,18 @@ export default function MapsPage() {
                   <TableCell className="text-xs text-muted-foreground">
                     {m.uploadTime}
                   </TableCell>
-                  <TableCell className="text-right">
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-7 w-7 text-muted-foreground hover:text-destructive"
-                      onClick={() => setDeleteTarget(m.mapId)}
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
-                  </TableCell>
+                  {canEdit && (
+                    <TableCell className="text-right">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                        onClick={() => setDeleteTarget(m.mapId)}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </TableCell>
+                  )}
                 </TableRow>
               ))}
           </TableBody>

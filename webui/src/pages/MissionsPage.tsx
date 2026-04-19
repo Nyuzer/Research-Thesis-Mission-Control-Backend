@@ -27,6 +27,7 @@ import DataTablePagination from "@/components/DataTablePagination";
 import { Trash2, Search, ChevronDown, ChevronRight, Navigation, Timer, ParkingCircle, X, Filter } from "lucide-react";
 import { cn } from "@/lib/utils";
 import ConfirmDeleteDialog from "@/components/ConfirmDeleteDialog";
+import { useAuthStore } from "@/utils/auth";
 
 function statusColor(status: string) {
   const s = status?.toLowerCase();
@@ -124,7 +125,7 @@ function missionTypeBadge(m: any) {
 
 /* ── Mobile cards ── */
 
-function MissionCard({ m, onDelete, expanded, onToggle }: { m: any; onDelete: () => void; expanded: boolean; onToggle: () => void }) {
+function MissionCard({ m, onDelete, expanded, onToggle, canDelete }: { m: any; onDelete: () => void; expanded: boolean; onToggle: () => void; canDelete: boolean }) {
   const id = m.command?.missionId || m.missionId;
   const expandable = hasStepDetails(m);
   return (
@@ -143,9 +144,11 @@ function MissionCard({ m, onDelete, expanded, onToggle }: { m: any; onDelete: ()
             <Badge variant="outline" className={cn("text-[10px]", statusColor(m.status))}>
               {m.status}
             </Badge>
-            <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive" onClick={(e) => { e.stopPropagation(); onDelete(); }}>
-              <Trash2 className="h-3.5 w-3.5" />
-            </Button>
+            {canDelete && (
+              <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive" onClick={(e) => { e.stopPropagation(); onDelete(); }}>
+                <Trash2 className="h-3.5 w-3.5" />
+              </Button>
+            )}
           </div>
         </div>
         <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
@@ -168,7 +171,7 @@ function MissionCard({ m, onDelete, expanded, onToggle }: { m: any; onDelete: ()
   );
 }
 
-function ScheduledCard({ m, onDelete, expanded, onToggle }: { m: any; onDelete: () => void; expanded: boolean; onToggle: () => void }) {
+function ScheduledCard({ m, onDelete, expanded, onToggle, canDelete }: { m: any; onDelete: () => void; expanded: boolean; onToggle: () => void; canDelete: boolean }) {
   const id = m.command?.missionId || m.missionId;
   const expandable = hasStepDetails(m) || Boolean(m.advancedSteps?.length);
   return (
@@ -187,9 +190,11 @@ function ScheduledCard({ m, onDelete, expanded, onToggle }: { m: any; onDelete: 
             <Badge variant="outline" className={cn("text-[10px]", statusColor(m.status))}>
               {m.status}
             </Badge>
-            <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive" onClick={(e) => { e.stopPropagation(); onDelete(); }}>
-              <Trash2 className="h-3.5 w-3.5" />
-            </Button>
+            {canDelete && (
+              <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive" onClick={(e) => { e.stopPropagation(); onDelete(); }}>
+                <Trash2 className="h-3.5 w-3.5" />
+              </Button>
+            )}
           </div>
         </div>
         <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
@@ -215,6 +220,8 @@ function ScheduledCard({ m, onDelete, expanded, onToggle }: { m: any; onDelete: 
 /* ── Main page ── */
 
 export default function MissionsPage() {
+  const userRole = useAuthStore((s) => s.user?.role);
+  const canDelete = userRole !== "viewer";
   const { data: missionsData, refetch: refetchMissions } = useQuery({
     queryKey: ["missions"],
     queryFn: fetchMissions,
@@ -417,6 +424,7 @@ export default function MissionsPage() {
                     expanded={expandedIds.has(id)}
                     onToggle={() => toggleExpand(id)}
                     onDelete={() => setDeleteTarget({ id, type: "regular" })}
+                    canDelete={canDelete}
                   />
                 );
               })}
@@ -434,7 +442,7 @@ export default function MissionsPage() {
                   <TableHead className="text-xs">Sent</TableHead>
                   <TableHead className="text-xs">Exec</TableHead>
                   <TableHead className="text-xs">Done</TableHead>
-                  <TableHead className="text-xs text-right">Actions</TableHead>
+                  {canDelete && <TableHead className="text-xs text-right">Actions</TableHead>}
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -471,15 +479,17 @@ export default function MissionsPage() {
                           <TableCell className="text-xs font-mono text-muted-foreground">{m.sentTime || "\u2014"}</TableCell>
                           <TableCell className="text-xs font-mono text-muted-foreground">{m.executedTime || "\u2014"}</TableCell>
                           <TableCell className="text-xs font-mono text-muted-foreground">{m.completedTime || "\u2014"}</TableCell>
-                          <TableCell className="text-right">
-                            <Button
-                              variant="ghost" size="icon"
-                              className="h-7 w-7 text-muted-foreground hover:text-destructive"
-                              onClick={(e) => { e.stopPropagation(); setDeleteTarget({ id, type: "regular" }); }}
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </Button>
-                          </TableCell>
+                          {canDelete && (
+                            <TableCell className="text-right">
+                              <Button
+                                variant="ghost" size="icon"
+                                className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                                onClick={(e) => { e.stopPropagation(); setDeleteTarget({ id, type: "regular" }); }}
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </Button>
+                            </TableCell>
+                          )}
                         </TableRow>
                         {isExpanded && (
                           <TableRow className="hover:bg-transparent">
@@ -518,6 +528,7 @@ export default function MissionsPage() {
                     expanded={expandedIds.has(id)}
                     onToggle={() => toggleExpand(id)}
                     onDelete={() => setDeleteTarget({ id, type: "scheduled" })}
+                    canDelete={canDelete}
                   />
                 );
               })}
@@ -536,7 +547,7 @@ export default function MissionsPage() {
                   <TableHead className="text-xs">Scheduled</TableHead>
                   <TableHead className="text-xs">Exec</TableHead>
                   <TableHead className="text-xs">Done</TableHead>
-                  <TableHead className="text-xs text-right">Actions</TableHead>
+                  {canDelete && <TableHead className="text-xs text-right">Actions</TableHead>}
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -574,15 +585,17 @@ export default function MissionsPage() {
                           <TableCell className="text-xs font-mono text-muted-foreground">{m.scheduledTime || m.cron || "\u2014"}</TableCell>
                           <TableCell className="text-xs font-mono text-muted-foreground">{m.executedTime || "\u2014"}</TableCell>
                           <TableCell className="text-xs font-mono text-muted-foreground">{m.completedTime || "\u2014"}</TableCell>
-                          <TableCell className="text-right">
-                            <Button
-                              variant="ghost" size="icon"
-                              className="h-7 w-7 text-muted-foreground hover:text-destructive"
-                              onClick={(e) => { e.stopPropagation(); setDeleteTarget({ id, type: "scheduled" }); }}
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </Button>
-                          </TableCell>
+                          {canDelete && (
+                            <TableCell className="text-right">
+                              <Button
+                                variant="ghost" size="icon"
+                                className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                                onClick={(e) => { e.stopPropagation(); setDeleteTarget({ id, type: "scheduled" }); }}
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </Button>
+                            </TableCell>
+                          )}
                         </TableRow>
                         {isExpanded && (
                           <TableRow className="hover:bg-transparent">

@@ -5,6 +5,7 @@ import "proj4leaflet";
 import proj4 from "proj4";
 import { fetchJSON } from "@/utils/api";
 import { showToast } from "@/lib/toast";
+import { useAuthStore } from "@/utils/auth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -143,6 +144,8 @@ function distToPolyline(px: number, py: number, pts: { x: number; y: number }[])
 /* ═══════════════════════════ COMPONENT ═══════════════════════════ */
 
 export default function MapGenPage() {
+  const userRole = useAuthStore((s) => s.user?.role);
+  const canEdit = userRole !== "viewer";
   /* ── Restore persisted session (lazy, runs once) ── */
   const savedRef = useRef(loadSession());
 
@@ -1552,25 +1555,31 @@ export default function MapGenPage() {
           <Input type="number" step="0.01" value={resolution} onChange={(e) => setResolution(e.target.value)} className="h-8 text-sm" />
         </div>
 
-        <Button className="w-full gap-2" onClick={exportMap} disabled={saving || !bbox}>
-          <Save className="h-4 w-4" /> {saving ? "Saving..." : "Save Map"}
-        </Button>
+        {canEdit && (
+          <Button className="w-full gap-2" onClick={exportMap} disabled={saving || !bbox}>
+            <Save className="h-4 w-4" /> {saving ? "Saving..." : "Save Map"}
+          </Button>
+        )}
 
-        <hr className="border-border" />
+        {canEdit && (
+          <>
+            <hr className="border-border" />
 
-        {/* V2: OSM Auto-fill */}
-        <h3 className="text-sm font-semibold text-foreground">Auto-Fill (OSM)</h3>
-        <p className="text-[10px] text-muted-foreground">
-          Fetches buildings, roads, water from OpenStreetMap and auto-classifies as occupancy grid. Draw a bounding box first.
-        </p>
-        <Button
-          className="w-full gap-2"
-          variant="outline"
-          onClick={autoFillOSM}
-          disabled={osmLoading || !bbox || osmCooldown > 0}
-        >
-          <Wand2 className="h-4 w-4" /> {osmLoading ? "Loading OSM..." : osmCooldown > 0 ? `Wait ${osmCooldown}s` : "Auto-Fill from OSM"}
-        </Button>
+            {/* V2: OSM Auto-fill */}
+            <h3 className="text-sm font-semibold text-foreground">Auto-Fill (OSM)</h3>
+            <p className="text-[10px] text-muted-foreground">
+              Fetches buildings, roads, water from OpenStreetMap and auto-classifies as occupancy grid. Draw a bounding box first.
+            </p>
+            <Button
+              className="w-full gap-2"
+              variant="outline"
+              onClick={autoFillOSM}
+              disabled={osmLoading || !bbox || osmCooldown > 0}
+            >
+              <Wand2 className="h-4 w-4" /> {osmLoading ? "Loading OSM..." : osmCooldown > 0 ? `Wait ${osmCooldown}s` : "Auto-Fill from OSM"}
+            </Button>
+          </>
+        )}
       </div>
     </div>
   );

@@ -19,8 +19,10 @@ import {
 import { Button } from "@/components/ui/button";
 import { OctagonX, ParkingSquare } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useAuthStore } from "@/utils/auth";
 
 export default function TopBanner() {
+  const userRole = useAuthStore((s) => s.user?.role);
   const { data: robots } = useQuery({
     queryKey: ["robots"],
     queryFn: fetchRobots,
@@ -159,18 +161,20 @@ export default function TopBanner() {
           </Select>
         </div>
 
-        <Button
-          variant="destructive"
-          size="sm"
-          className="h-8 sm:h-9 sm:px-4 gap-1.5"
-          onClick={onStop}
-        >
-          <OctagonX className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
-          <span className="hidden sm:inline text-sm">Stop / Abort</span>
-          <span className="sm:hidden">Stop</span>
-        </Button>
+        {userRole !== "viewer" && (
+          <Button
+            variant="destructive"
+            size="sm"
+            className="h-8 sm:h-9 sm:px-4 gap-1.5"
+            onClick={onStop}
+          >
+            <OctagonX className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+            <span className="hidden sm:inline text-sm">Stop / Abort</span>
+            <span className="sm:hidden">Stop</span>
+          </Button>
+        )}
 
-        {selectedRobotId && (
+        {userRole !== "viewer" && selectedRobotId && (
           <Tooltip>
             <TooltipTrigger asChild>
               <Button

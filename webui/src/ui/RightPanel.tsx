@@ -17,6 +17,7 @@ import { DateTimePicker } from "@/components/ui/datetime-picker";
 import { Send, Trash2, Plus, ChevronUp, ChevronDown, X, BookOpen } from "lucide-react";
 
 export default function RightPanel() {
+  const userRole = useAuthStore((s) => s.user?.role);
   const robotId = useSelectionStore((s) => s.selectedRobotId);
   const mapId = useSelectionStore((s) => s.selectedMapId);
   const destX = useSelectionStore((s) => s.destX);
@@ -253,6 +254,14 @@ export default function RightPanel() {
       </div>
     </div>
   );
+
+  if (userRole === "viewer") {
+    return (
+      <div className="p-3 text-sm text-muted-foreground text-center py-8">
+        Mission controls are not available for viewers.
+      </div>
+    );
+  }
 
   return (
     <div className="p-3">

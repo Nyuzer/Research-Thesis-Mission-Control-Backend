@@ -1,5 +1,24 @@
 import { getAuthHeaders, useAuthStore } from "./auth";
 
+function parseErrorMessage(text: string, status: number): string {
+  try {
+    const json = JSON.parse(text);
+    const detail = json.detail || json.message || json.error;
+    if (typeof detail === "string") {
+      if (detail.includes("Requires one of roles"))
+        return "You don't have permission to perform this action";
+      if (detail.includes("Not found"))
+        return "The requested resource was not found";
+      return detail;
+    }
+  } catch {}
+  if (status === 403) return "You don't have permission to perform this action";
+  if (status === 404) return "The requested resource was not found";
+  if (status === 422) return "Invalid request data";
+  if (status === 500) return "Server error. Please try again later";
+  return text || `Request failed (${status})`;
+}
+
 export async function fetchJSON<T>(
   url: string,
   init?: RequestInit
@@ -23,7 +42,7 @@ export async function fetchJSON<T>(
       const retry = await fetch(url, { ...init, headers: retryHeaders });
       if (!retry.ok) {
         const text = await retry.text();
-        throw new Error(text || retry.statusText);
+        throw new Error(parseErrorMessage(text, retry.status));
       }
       return retry.json();
     }
@@ -33,7 +52,7 @@ export async function fetchJSON<T>(
 
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(text || res.statusText);
+    throw new Error(parseErrorMessage(text, res.status));
   }
   return res.json();
 }
