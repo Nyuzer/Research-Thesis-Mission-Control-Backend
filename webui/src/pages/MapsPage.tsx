@@ -93,6 +93,8 @@ export default function MapsPage() {
   });
   const yamlRef = useRef<HTMLInputElement | null>(null);
   const imgRef = useRef<HTMLInputElement | null>(null);
+  const [yamlName, setYamlName] = useState("");
+  const [imgName, setImgName] = useState("");
   const [uploading, setUploading] = useState(false);
   const [page, setPage] = useState(0);
   const [rows, setRows] = useState(10);
@@ -167,6 +169,8 @@ export default function MapsPage() {
       showToast("Map uploaded", "success");
       yamlRef.current!.value = "";
       imgRef.current!.value = "";
+      setYamlName("");
+      setImgName("");
       refetch();
     } catch (e: any) {
       showToast(e?.message || "Upload failed", "error");
@@ -211,32 +215,34 @@ export default function MapsPage() {
           <Button
             variant="outline"
             size="sm"
-            className="gap-1.5"
+            className={cn("gap-1.5", yamlName && "border-success/50 text-success")}
             onClick={() => yamlRef.current?.click()}
           >
             <Upload className="h-3.5 w-3.5" />
-            Choose YAML
+            {yamlName || "Choose YAML"}
           </Button>
           <input
             ref={yamlRef}
             type="file"
             accept=".yaml"
             className="hidden"
+            onChange={(e) => setYamlName(e.target.files?.[0]?.name || "")}
           />
           <Button
             variant="outline"
             size="sm"
-            className="gap-1.5"
+            className={cn("gap-1.5", imgName && "border-success/50 text-success")}
             onClick={() => imgRef.current?.click()}
           >
             <Upload className="h-3.5 w-3.5" />
-            Choose PNG/PGM
+            {imgName || "Choose PNG/PGM"}
           </Button>
           <input
             ref={imgRef}
             type="file"
             accept=".png,.pgm"
             className="hidden"
+            onChange={(e) => setImgName(e.target.files?.[0]?.name || "")}
           />
           <Button size="sm" onClick={onUpload} disabled={uploading}>
             {uploading ? "Uploading..." : "Upload"}

@@ -6,6 +6,7 @@ import LoginPage from "./pages/LoginPage";
 import UsersPage from "./pages/UsersPage";
 import StatisticsPage from "./pages/StatisticsPage";
 import MapGenPage from "./pages/MapGenPage";
+import NotFoundPage from "./pages/NotFoundPage";
 import ProtectedRoute from "./components/ProtectedRoute";
 import { cn } from "@/lib/utils";
 import { useTheme } from "@/lib/theme";
@@ -108,8 +109,9 @@ export default function App() {
           <Route path="/maps" element={<ProtectedRoute><MapsPage /></ProtectedRoute>} />
           <Route path="/statistics" element={<ProtectedRoute><StatisticsPage /></ProtectedRoute>} />
           <Route path="/mapgen" element={<ProtectedRoute>{user?.role === "viewer" ? <Navigate to="/" replace /> : <MapGenPage />}</ProtectedRoute>} />
-          <Route path="/users" element={<ProtectedRoute><UsersPage /></ProtectedRoute>} />
+          <Route path="/users" element={<ProtectedRoute>{user?.role !== "admin" ? <Navigate to="/" replace /> : <UsersPage />}</ProtectedRoute>} />
           <Route path="/login" element={<LoginPage />} />
+          <Route path="*" element={<NotFoundPage />} />
         </Routes>
       </div>
     </div>

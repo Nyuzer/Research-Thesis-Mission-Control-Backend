@@ -34,7 +34,10 @@ async def query_osm_features(south: float, west: float, north: float, east: floa
                 resp = await client.post(
                     OVERPASS_URL,
                     data={"data": query},
-                    headers={"Content-Type": "application/x-www-form-urlencoded"},
+                    headers={
+                        "User-Agent": "MissionControl/1.0",
+                        "Accept": "*/*",
+                    },
                     timeout=90.0,
                 )
                 logger.info(f"Overpass response status: {resp.status_code}")
