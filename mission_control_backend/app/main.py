@@ -13,6 +13,9 @@ from app.auth.router import router as auth_router
 from app.auth.bootstrap import create_default_admin
 from app.auth.dependencies import get_current_user, require_role, get_robot_or_user
 from app.auth.models import UserResponse, UserRole
+from app.auth.jwt_handler import decode_token as jwt_decode_token
+from app.auth.database import users_collection as auth_users_collection
+from app.validators import validate_map_id
 from app.statistics.router import router as statistics_router
 from app.zones.router import router as zones_router
 from app.mapgen.router import router as mapgen_router
@@ -81,6 +84,17 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# Global exception handler — sanitize error details (Fix 11)
+from fastapi import Request as _Request
+from fastapi.responses import JSONResponse
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: _Request, exc: Exception):
+    logger.error(f"Unhandled exception on {request.method} {request.url.path}: {exc}", exc_info=True)
+    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
+
 
 # FIWARE Configuration
 FIWARE_IOT_AGENT_URL = os.getenv("FIWARE_IOT_AGENT_URL", "http://localhost:4041/v2/op/update")
@@ -490,7 +504,7 @@ def transform_epsg_to_wgs84(x_utm, y_utm):
         logger.error(f"❌ Coordinate transformation failed: UTM({x_utm}, {y_utm}) - {str(e)}")
         raise HTTPException(
             status_code=400, 
-            detail=f"Invalid coordinates for transformation: {str(e)}"
+            detail="Invalid coordinates for transformation"
         )
 
 def transform_wgs84_to_epsg(lat, lon):
@@ -528,7 +542,7 @@ def transform_wgs84_to_epsg(lat, lon):
         logger.error(f"❌ Coordinate transformation failed: WGS84({lat}, {lon}) - {str(e)}")
         raise HTTPException(
             status_code=400, 
-            detail=f"Invalid coordinates for transformation: {str(e)}"
+            detail="Invalid coordinates for transformation"
         )
 
 def create_geojson_point(x_utm, y_utm):
@@ -672,19 +686,48 @@ async def list_robots_from_orion() -> List[RobotInfo]:
         raise HTTPException(status_code=503, detail="FIWARE Orion Context Broker not accessible. Please ensure FIWARE infrastructure is running.")
     except httpx.HTTPError as e:
         logger.error(f"Error listing robots from Orion: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error listing robots from FIWARE: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error listing robots from FIWARE")
     except Exception as e:
         logger.error(f"Unexpected error listing robots from Orion: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Unexpected error listing robots from FIWARE: {str(e)}")
+        raise HTTPException(status_code=500, detail="Unexpected error listing robots from FIWARE")
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
+    # Must accept() first — Starlette returns 403 if we close() before accept()
     await websocket.accept()
+
+    # Authenticate via ?token= query parameter
+    token = websocket.query_params.get("token")
+    if not token:
+        logger.warning("WebSocket rejected: no token provided")
+        await websocket.close(code=4001, reason="Authentication required")
+        return
+
+    try:
+        payload = jwt_decode_token(token)
+        if payload.get("type") != "access":
+            logger.warning("WebSocket rejected: wrong token type")
+            await websocket.close(code=4001, reason="Invalid token type")
+            return
+        user_id = payload.get("sub")
+        if not user_id:
+            logger.warning("WebSocket rejected: no sub in token")
+            await websocket.close(code=4001, reason="Invalid token")
+            return
+        user_doc = auth_users_collection.find_one({"_id": user_id})
+        if not user_doc or not user_doc.get("is_active", True):
+            logger.warning(f"WebSocket rejected: user {user_id} not found or deactivated")
+            await websocket.close(code=4001, reason="User not found or deactivated")
+            return
+    except Exception as e:
+        logger.warning(f"WebSocket rejected: token validation error: {e}")
+        await websocket.close(code=4001, reason="Invalid or expired token")
+        return
+
     connected_websockets.append(websocket)
-    logger.info("WebSocket client connected")
+    logger.info(f"WebSocket client connected (user: {user_id})")
     try:
         while True:
-            # Keepalive: receive pings from client if any; we won't process incoming messages for now
             await asyncio.sleep(1)
     except WebSocketDisconnect:
         logger.info("WebSocket client disconnected")
@@ -1079,7 +1122,7 @@ async def create_mission_entity(mission: Mission):
         raise HTTPException(status_code=500, detail=f"Error storing mission in FIWARE: {error_detail}")
     except Exception as e:
         logger.error(f"Unexpected error creating mission entity in Orion: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Unexpected error storing mission in FIWARE: {str(e)}")
+        raise HTTPException(status_code=500, detail="Unexpected error storing mission in FIWARE")
 
 async def get_mission_from_orion(mission_id: str):
     """Retrieve mission entity from FIWARE Orion Context Broker"""
@@ -1150,10 +1193,10 @@ async def get_mission_from_orion(mission_id: str):
         )
     except httpx.HTTPError as e:
         logger.error(f"Error retrieving mission from Orion: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error retrieving mission from FIWARE: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error retrieving mission from FIWARE")
     except Exception as e:
         logger.error(f"Unexpected error retrieving mission from Orion: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Unexpected error retrieving mission from FIWARE: {str(e)}")
+        raise HTTPException(status_code=500, detail="Unexpected error retrieving mission from FIWARE")
 
 async def list_missions_from_orion():
     """List all mission entities from FIWARE Orion Context Broker"""
@@ -1248,10 +1291,10 @@ async def list_missions_from_orion():
         )
     except httpx.HTTPError as e:
         logger.error(f"Error listing missions from Orion: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error listing missions from FIWARE: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error listing missions from FIWARE")
     except Exception as e:
         logger.error(f"Unexpected error listing missions from Orion: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Unexpected error listing missions from FIWARE: {str(e)}")
+        raise HTTPException(status_code=500, detail="Unexpected error listing missions from FIWARE")
 
 # FIWARE Orion Integration Functions for ScheduledMission
 async def create_scheduled_mission_entity(scheduled_mission: ScheduledMission):
@@ -1349,7 +1392,7 @@ async def create_scheduled_mission_entity(scheduled_mission: ScheduledMission):
             return response.json() if response.text.strip() else {"status": "created"}
     except Exception as e:
         logger.error(f"Error creating scheduled mission in Orion: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error creating scheduled mission in Orion: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error creating scheduled mission in Orion")
 
 async def get_scheduled_mission_from_orion(mission_id: str):
     entity_id = f"urn:ngsi-ld:ScheduledMission:{mission_id}"
@@ -1419,7 +1462,7 @@ async def get_scheduled_mission_from_orion(mission_id: str):
             )
     except Exception as e:
         logger.error(f"Error retrieving scheduled mission from Orion: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error retrieving scheduled mission from Orion: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error retrieving scheduled mission from Orion")
 
 async def list_scheduled_missions_from_orion():
     params = {"type": "ScheduledMission", "limit": "1000"}
@@ -1491,7 +1534,7 @@ async def list_scheduled_missions_from_orion():
             return missions
     except Exception as e:
         logger.error(f"Error listing scheduled missions from Orion: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error listing scheduled missions from Orion: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error listing scheduled missions from Orion")
 
 async def update_scheduled_mission_status_in_orion(mission_id: str, status: str, **kwargs):
     """Update scheduled mission status in Orion Context Broker"""
@@ -1553,7 +1596,7 @@ async def update_scheduled_mission_status_in_orion(mission_id: str, status: str,
                 return await _update_scheduled_mission_fields_individually(client, entity_id, status, kwargs, headers)
         except Exception as fallback_error:
             logger.error(f"Fallback update also failed: {str(fallback_error)}")
-            return {"missionId": mission_id, "status": status, "message": "Status update failed", "error": str(e)}
+            return {"missionId": mission_id, "status": status, "message": "Status update failed"}
 
 async def _update_scheduled_mission_fields_individually(client, entity_id: str, status: str, kwargs: dict, headers: dict):
     """Fallback method to update fields individually if bulk update fails"""
@@ -1620,7 +1663,7 @@ async def _update_scheduled_mission_fields_individually(client, entity_id: str, 
             
     except Exception as e:
         logger.error(f"Individual field update failed: {str(e)}")
-        return {"missionId": entity_id.replace("urn:ngsi-ld:ScheduledMission:", ""), "status": status, "message": "Individual field update failed", "error": str(e)}
+        return {"missionId": entity_id.replace("urn:ngsi-ld:ScheduledMission:", ""), "status": status, "message": "Individual field update failed"}
 
 async def delete_scheduled_mission_from_orion(mission_id: str):
     entity_id = f"urn:ngsi-ld:ScheduledMission:{mission_id}"
@@ -1641,7 +1684,7 @@ async def delete_scheduled_mission_from_orion(mission_id: str):
             return {"missionId": mission_id, "message": "Scheduled mission deleted"}
     except Exception as e:
         logger.error(f"Error deleting scheduled mission from Orion: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error deleting scheduled mission from Orion: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error deleting scheduled mission from Orion")
 
 
 @app.get("/")
@@ -1693,33 +1736,45 @@ async def upload_map(
         raise HTTPException(status_code=400, detail="Map YAML file must have .yaml extension")
     if not map_image.filename.endswith(('.png', '.pgm')):
         raise HTTPException(status_code=400, detail="Map image file must have .png or .pgm extension")
-    
+
+    # Read files into memory and enforce size limits (Fix 7)
+    MAX_YAML_SIZE = 1 * 1024 * 1024   # 1 MB
+    MAX_IMAGE_SIZE = 10 * 1024 * 1024  # 10 MB
+
+    yaml_bytes = await map_yaml.read()
+    if len(yaml_bytes) > MAX_YAML_SIZE:
+        raise HTTPException(status_code=413, detail=f"YAML file too large. Maximum size: {MAX_YAML_SIZE // (1024*1024)} MB")
+
+    image_bytes = await map_image.read()
+    if len(image_bytes) > MAX_IMAGE_SIZE:
+        raise HTTPException(status_code=413, detail=f"Image file too large. Maximum size: {MAX_IMAGE_SIZE // (1024*1024)} MB")
+
     # Generate unique map ID
     map_id = f"map_{uuid.uuid4().hex[:8]}"
-    
+
     # Get map-specific lock for upload operation
     with maps_lock:
         if map_id not in map_locks:
             map_locks[map_id] = Lock()
         map_lock = map_locks[map_id]
-    
+
     # Use map-specific lock for this operation
     with map_lock:
         # Create map directory
         map_dir = f"maps/{map_id}"
         os.makedirs(map_dir, exist_ok=True)
-    
+
     try:
         # Save YAML file as map.yaml
         yaml_path = f"{map_dir}/map.yaml"
         with open(yaml_path, "wb") as f:
-            shutil.copyfileobj(map_yaml.file, f)
-        
+            f.write(yaml_bytes)
+
         # Save image file as map.png or map.pgm
         image_extension = map_image.filename.split('.')[-1]
         image_path = f"{map_dir}/map.{image_extension}"
         with open(image_path, "wb") as f:
-            shutil.copyfileobj(map_image.file, f)
+            f.write(image_bytes)
         
         # Parse YAML to extract map info
         with open(yaml_path, 'r') as f:
@@ -1748,7 +1803,7 @@ async def upload_map(
         if os.path.exists(map_dir):
             shutil.rmtree(map_dir)
         logger.error(f"Error uploading map: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error uploading map: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error uploading map")
 
 @app.get("/api/robots")
 async def list_robots(_user: UserResponse = Depends(get_current_user)):
@@ -1790,6 +1845,7 @@ async def list_maps(_user: UserResponse = Depends(get_current_user)):
 @app.get("/api/maps/{map_id}")
 async def get_map_info(map_id: str, _user: UserResponse = Depends(get_current_user)):
     """Get information about a specific map by reading its map.yaml"""
+    validate_map_id(map_id)
     # Get map-specific lock for read operation
     with maps_lock:
         if map_id not in map_locks:
@@ -1817,11 +1873,12 @@ async def get_map_info(map_id: str, _user: UserResponse = Depends(get_current_us
             return map_info
         except Exception as e:
             logger.error(f"Error reading map.yaml for {map_id}: {str(e)}")
-            raise HTTPException(status_code=500, detail=f"Error reading map.yaml: {str(e)}")
+            raise HTTPException(status_code=500, detail="Error reading map.yaml")
 
 @app.get("/api/maps/{map_id}/files")
 async def get_map_files_info(map_id: str, _user: UserResponse = Depends(get_robot_or_user)):
     """Get map files information and download links for robots"""
+    validate_map_id(map_id)
     map_dir = f"maps/{map_id}"
     yaml_path = f"{map_dir}/map.yaml"
     if not os.path.exists(yaml_path):
@@ -1859,11 +1916,12 @@ async def get_map_files_info(map_id: str, _user: UserResponse = Depends(get_robo
         }
     except Exception as e:
         logger.error(f"Error getting map files info: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error getting map files info: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error getting map files info")
 
 @app.get("/api/maps/{map_id}/yaml")
 async def download_map_yaml(map_id: str):
     """Download map YAML file"""
+    validate_map_id(map_id)
     yaml_path = f"maps/{map_id}/map.yaml"
     if not os.path.exists(yaml_path):
         raise HTTPException(status_code=404, detail="Map not found")
@@ -1872,6 +1930,7 @@ async def download_map_yaml(map_id: str):
 @app.get("/api/maps/{map_id}/image")
 async def download_map_image(map_id: str):
     """Serve map image file inline for browser rendering (PNG/PGM)."""
+    validate_map_id(map_id)
     map_dir = f"maps/{map_id}"
     if not os.path.exists(map_dir):
         raise HTTPException(status_code=404, detail="Map not found")
@@ -1887,15 +1946,7 @@ async def download_map_image(map_id: str):
 @app.delete("/api/maps/{map_id}")
 async def delete_map(map_id: str, _user: UserResponse = Depends(require_role(UserRole.admin, UserRole.operator))):
     """Delete a map by map_id"""
-    
-    # Input validation - accept map_ and gen_ prefixes
-    valid = False
-    for prefix in ("map_", "gen_"):
-        if map_id.startswith(prefix) and len(map_id) == len(prefix) + 8 and all(c in "abcdef0123456789" for c in map_id[len(prefix):]):
-            valid = True
-            break
-    if not valid:
-        raise HTTPException(status_code=400, detail="Invalid map_id format. Expected format: map_[a-f0-9]{8} or gen_[a-f0-9]{8}")
+    validate_map_id(map_id)
     
     # Get map-specific lock - Task 7
     with maps_lock:
@@ -1961,7 +2012,7 @@ async def delete_map(map_id: str, _user: UserResponse = Depends(require_role(Use
         except Exception as e:
             # Comprehensive error handling - Task 4
             logger.error(f"Error deleting map {map_id}: {str(e)}")
-            raise HTTPException(status_code=500, detail=f"Error deleting map: {str(e)}")
+            raise HTTPException(status_code=500, detail="Error deleting map")
 
 # FIWARE Integration
 async def send_fiware_command(robot_id: str, command_message: CommandMessage):
@@ -2078,10 +2129,10 @@ async def send_fiware_command(robot_id: str, command_message: CommandMessage):
         if hasattr(e, 'response') and e.response is not None:
             logger.error(f"   Status code: {e.response.status_code}")
             logger.error(f"   Response body: {e.response.text}")
-        raise HTTPException(status_code=500, detail=f"Error sending command to IoT Agent: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error sending command to IoT Agent")
     except Exception as e:
         logger.error(f"Unexpected error sending IoT Agent command: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Unexpected error sending command to IoT Agent: {str(e)}")
+        raise HTTPException(status_code=500, detail="Unexpected error sending command to IoT Agent")
 
 async def send_fiware_raw_command(robot_id: str, payload_dict: dict):
     """Send a raw command payload to robot via FIWARE IoT Agent.
@@ -2213,7 +2264,7 @@ async def send_local_mqtt_command(robot_id: str, command_message: CommandMessage
         logger.error(f"❌ Error sending local MQTT command: {str(e)}")
         raise HTTPException(
             status_code=503, 
-            detail=f"Local MQTT broker not accessible: {str(e)}"
+            detail="Local MQTT broker not accessible"
         )
 
 def store_local_mission(mission: Mission):
@@ -2293,7 +2344,7 @@ async def send_mission(mission: MissionRequest, _user: UserResponse = Depends(re
         raise e
     except Exception as e:
         logger.error(f"Unexpected error sending mission: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Unexpected error sending mission: {str(e)}")
+        raise HTTPException(status_code=500, detail="Unexpected error sending mission")
 
     # Create mission object
     mission_obj = Mission(
@@ -2467,10 +2518,10 @@ async def delete_mission(mission_id: str, _user: UserResponse = Depends(require_
         )
     except httpx.HTTPError as e:
         logger.error(f"Error deleting mission from Orion: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error deleting mission from FIWARE: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error deleting mission from FIWARE")
     except Exception as e:
         logger.error(f"Unexpected error deleting mission: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Unexpected error deleting mission: {str(e)}")
+        raise HTTPException(status_code=500, detail="Unexpected error deleting mission")
 
 # Local MQTT Endpoints (separate from FIWARE)
 @app.post("/api/local-mqtt/missions/send")
@@ -2548,7 +2599,7 @@ async def send_mission_local_mqtt(mission: MissionRequest, _user: UserResponse =
         raise e
     except Exception as e:
         logger.error(f"Unexpected error sending mission via Local MQTT: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Unexpected error sending mission via Local MQTT: {str(e)}")
+        raise HTTPException(status_code=500, detail="Unexpected error sending mission via Local MQTT")
 
 @app.get("/api/local-mqtt/missions")
 async def list_missions_local_mqtt(_user: UserResponse = Depends(get_current_user)):
@@ -2605,7 +2656,7 @@ async def update_mission_status_local_mqtt(mission_id: str, status_update: Missi
         raise e
     except Exception as e:
         logger.error(f"Unexpected error updating mission status: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Unexpected error updating mission status: {str(e)}")
+        raise HTTPException(status_code=500, detail="Unexpected error updating mission status")
 
 @app.delete("/api/local-mqtt/missions/{mission_id}")
 async def delete_mission_local_mqtt(mission_id: str, _user: UserResponse = Depends(require_role(UserRole.admin, UserRole.operator))):
@@ -2665,7 +2716,7 @@ async def stop_robot(robot_id: str, _user: UserResponse = Depends(require_role(U
         logger.error(f"❌ Unexpected error sending STOP command to {robot_id}: {str(e)}")
         raise HTTPException(
             status_code=500,
-            detail=f"Unexpected error sending STOP command: {str(e)}"
+            detail="Unexpected error sending STOP command"
         )
 
 
@@ -2712,7 +2763,7 @@ async def set_robot_auto_park(robot_id: str, body: AutoParkUpdate, _user: UserRe
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to update auto-park: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to update auto-park")
     robot_auto_park[robot_id] = body.enabled
     if not body.enabled:
         robot_idle_tracker.pop(robot_id, None)
@@ -2762,7 +2813,7 @@ async def stop_robot_local_mqtt(robot_id: str, _user: UserResponse = Depends(req
         logger.error(f"❌ Unexpected error sending STOP command to {robot_id}: {str(e)}")
         raise HTTPException(
             status_code=500, 
-            detail=f"Unexpected error sending STOP command: {str(e)}"
+            detail="Unexpected error sending STOP command"
         )
 
 @app.get("/api/local-mqtt/health")
@@ -2794,7 +2845,7 @@ async def health_check_local_mqtt():
 
 # Testing endpoints
 @app.post("/api/test/local-mqtt")
-async def test_local_mqtt_connection():
+async def test_local_mqtt_connection(_user: UserResponse = Depends(require_role(UserRole.admin))):
     """Test Local MQTT broker connectivity"""
     test_topic = "test/connection"
     test_message = {
@@ -2840,7 +2891,7 @@ async def test_local_mqtt_connection():
         }
 
 @app.post("/api/test/orion")
-async def test_orion_connection():
+async def test_orion_connection(_user: UserResponse = Depends(require_role(UserRole.admin))):
     """Test FIWARE Orion Context Broker connectivity"""
     headers = {
         "Accept": "application/json",
@@ -2888,7 +2939,7 @@ async def test_orion_connection():
         }
 
 @app.post("/api/test/fiware")
-async def test_fiware_connection():
+async def test_fiware_connection(_user: UserResponse = Depends(require_role(UserRole.admin))):
     """Test FIWARE IoT Agent connectivity"""
     test_payload = {
         "type": "CommandMessage",
@@ -2933,7 +2984,7 @@ async def test_fiware_connection():
         }
 
 @app.post("/api/test/coordinates")
-async def test_coordinate_transformations():
+async def test_coordinate_transformations(_user: UserResponse = Depends(require_role(UserRole.admin))):
     """Test coordinate transformation system"""
     
     # Test coordinates (example German UTM Zone 32N coordinates)
@@ -3952,10 +4003,10 @@ async def update_mission_status(mission_id: str, status_update: MissionStatusUpd
         if e.response.status_code == 404:
             raise HTTPException(status_code=404, detail="Mission not found")
         logger.error(f"Error updating mission status in Orion: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error updating mission status in FIWARE: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error updating mission status in FIWARE")
     except Exception as e:
         logger.error(f"Unexpected error updating mission status: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Unexpected error updating mission status: {str(e)}")
+        raise HTTPException(status_code=500, detail="Unexpected error updating mission status")
 
 # ── Advanced Missions (Multi-Waypoint) ──
 

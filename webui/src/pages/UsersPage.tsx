@@ -1,13 +1,16 @@
 import { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { fetchUsers, createUser, updateUser, deleteUser } from "@/utils/api";
+import {
+  fetchUsers, createUser, updateUser, deleteUser,
+  fetchRobotKeys, createRobotKey, deleteRobotKey, RobotKeyCreated,
+} from "@/utils/api";
 import { useAuthStore } from "@/utils/auth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import ConfirmDeleteDialog from "@/components/ConfirmDeleteDialog";
 import { showToast } from "@/lib/toast";
-import { Plus, Trash2, Pencil, X, Check, Shield, Eye, Wrench, Search, Filter } from "lucide-react";
+import { Plus, Trash2, Pencil, X, Check, Shield, Eye, Wrench, Search, Key, Copy, Bot } from "lucide-react";
 
 const ROLE_ICONS: Record<string, typeof Shield> = {
   admin: Shield,
@@ -358,6 +361,184 @@ export default function UsersPage() {
         }}
         onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}
       />
+
+      {/* Robot API Keys section */}
+      <RobotKeysSection />
     </div>
+  );
+}
+
+/* ─── Robot API Keys ─── */
+
+function RobotKeysSection() {
+  const queryClient = useQueryClient();
+  const { data: keys = [], isLoading } = useQuery({
+    queryKey: ["robot-keys"],
+    queryFn: fetchRobotKeys,
+  });
+
+  const [showCreate, setShowCreate] = useState(false);
+  const [form, setForm] = useState({ name: "", robot_id: "" });
+  const [createdKey, setCreatedKey] = useState<RobotKeyCreated | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
+
+  const createMut = useMutation({
+    mutationFn: createRobotKey,
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["robot-keys"] });
+      setCreatedKey(data);
+      setShowCreate(false);
+      setForm({ name: "", robot_id: "" });
+    },
+    onError: (e: any) => showToast(e.message, "error"),
+  });
+
+  const deleteMut = useMutation({
+    mutationFn: deleteRobotKey,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["robot-keys"] });
+      showToast("Robot key deleted", "success");
+    },
+    onError: (e: any) => showToast(e.message, "error"),
+  });
+
+  const copyKey = async (key: string) => {
+    await navigator.clipboard.writeText(key);
+    showToast("API key copied to clipboard", "success");
+  };
+
+  return (
+    <>
+      <div className="flex items-center justify-between pt-4 border-t border-border">
+        <div className="flex items-center gap-2">
+          <Bot className="h-4 w-4 text-muted-foreground" />
+          <h2 className="text-lg font-semibold text-foreground">Robot API Keys</h2>
+        </div>
+        <Button size="sm" onClick={() => setShowCreate(true)}>
+          <Plus className="h-4 w-4 mr-1" /> New Key
+        </Button>
+      </div>
+
+      <p className="text-xs text-muted-foreground">
+        Create API keys for robot bridges. Set the key as <code className="px-1 py-0.5 rounded bg-muted text-foreground">ROBOT_API_KEY</code> in the robot's environment.
+      </p>
+
+      {/* Created key banner — shown once */}
+      {createdKey && (
+        <div className="bg-green-500/10 border border-green-500/30 rounded-lg p-4 space-y-2">
+          <p className="text-sm font-medium text-green-400">
+            Key created — copy it now, it won't be shown again!
+          </p>
+          <div className="flex items-center gap-2">
+            <code className="flex-1 px-3 py-2 rounded bg-background border border-border text-sm text-foreground font-mono break-all select-all">
+              {createdKey.api_key}
+            </code>
+            <Button size="icon" variant="ghost" className="h-8 w-8 shrink-0" onClick={() => copyKey(createdKey.api_key)}>
+              <Copy className="h-4 w-4" />
+            </Button>
+          </div>
+          <Button size="sm" variant="ghost" className="text-xs" onClick={() => setCreatedKey(null)}>
+            Dismiss
+          </Button>
+        </div>
+      )}
+
+      {/* Create form */}
+      {showCreate && (
+        <div className="bg-card border border-border rounded-lg p-4 space-y-3">
+          <h3 className="text-sm font-medium">New Robot Key</h3>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <input
+              placeholder="Name (e.g. Lab Robot 01)"
+              value={form.name}
+              onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+              className="px-3 py-2 rounded-lg border border-border bg-background text-sm text-foreground"
+            />
+            <input
+              placeholder="Robot ID (e.g. Professor_Robot_01)"
+              value={form.robot_id}
+              onChange={(e) => setForm((f) => ({ ...f, robot_id: e.target.value }))}
+              className="px-3 py-2 rounded-lg border border-border bg-background text-sm text-foreground"
+            />
+          </div>
+          <div className="flex gap-2">
+            <Button
+              size="sm"
+              onClick={() => createMut.mutate(form)}
+              disabled={createMut.isPending || !form.name || !form.robot_id}
+            >
+              Generate Key
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => setShowCreate(false)}>
+              Cancel
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* Keys table */}
+      {isLoading ? (
+        <div className="text-sm text-muted-foreground">Loading...</div>
+      ) : (
+        <div className="bg-card border border-border rounded-lg overflow-hidden">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-border text-muted-foreground text-left">
+                <th className="px-4 py-3 font-medium">Name</th>
+                <th className="px-4 py-3 font-medium">Robot ID</th>
+                <th className="px-4 py-3 font-medium">Key</th>
+                <th className="px-4 py-3 font-medium">Created</th>
+                <th className="px-4 py-3 font-medium text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(keys as any[]).map((k: any) => (
+                <tr key={k.id} className="border-b border-border last:border-0">
+                  <td className="px-4 py-3">
+                    <span className="inline-flex items-center gap-1.5 text-foreground font-medium">
+                      <Key className="h-3.5 w-3.5 text-amber-400" />
+                      {k.name}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 text-muted-foreground font-mono text-xs">{k.robot_id}</td>
+                  <td className="px-4 py-3 text-muted-foreground font-mono text-xs">{k.key_prefix}</td>
+                  <td className="px-4 py-3 text-muted-foreground text-xs">
+                    {new Date(k.created_at).toLocaleDateString()}
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="h-7 w-7 text-red-400 hover:text-red-300"
+                      onClick={() => setDeleteTarget({ id: k.id, name: k.name })}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  </td>
+                </tr>
+              ))}
+              {keys.length === 0 && (
+                <tr>
+                  <td colSpan={5} className="px-4 py-8 text-center text-muted-foreground text-xs">
+                    No robot keys yet
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <ConfirmDeleteDialog
+        open={!!deleteTarget}
+        title="Delete Robot Key"
+        description={`Are you sure you want to delete key "${deleteTarget?.name}"? The robot using this key will lose access immediately.`}
+        onConfirm={() => {
+          if (deleteTarget) deleteMut.mutate(deleteTarget.id);
+          setDeleteTarget(null);
+        }}
+        onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}
+      />
+    </>
   );
 }

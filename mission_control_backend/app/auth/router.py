@@ -1,24 +1,30 @@
 from __future__ import annotations
+import hashlib
+import secrets
 from typing import List
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Request
 from datetime import datetime, timezone
 import uuid
 from jose import JWTError
 
 from .models import (
-    LoginRequest, TokenResponse, UserCreate, UserUpdate, UserResponse,
-    ProfileUpdate, UserRole,
+    LoginRequest, RefreshRequest, TokenResponse, UserCreate, UserUpdate,
+    UserResponse, ProfileUpdate, UserRole,
+    RobotKeyCreate, RobotKeyResponse, RobotKeyCreatedResponse,
 )
-from .database import users_collection
+from .database import users_collection, robot_api_keys_collection
 from .password import hash_password, verify_password
 from .jwt_handler import create_access_token, create_refresh_token, decode_token
 from .dependencies import get_current_user, require_role
+from .rate_limit import login_limiter, refresh_limiter
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
 @router.post("/login", response_model=TokenResponse)
-async def login(req: LoginRequest):
+async def login(req: LoginRequest, request: Request):
+    login_limiter.check(request)
+
     user_doc = users_collection.find_one({"email": req.email})
     if not user_doc or not verify_password(req.password, user_doc["hashed_password"]):
         raise HTTPException(status_code=401, detail="Invalid email or password")
@@ -47,9 +53,11 @@ async def login(req: LoginRequest):
 
 
 @router.post("/refresh", response_model=TokenResponse)
-async def refresh_token(refresh_token: str):
+async def refresh_token(req: RefreshRequest, request: Request):
+    refresh_limiter.check(request)
+
     try:
-        payload = decode_token(refresh_token)
+        payload = decode_token(req.refresh_token)
         if payload.get("type") != "refresh":
             raise HTTPException(status_code=401, detail="Invalid token type")
         user_id = payload.get("sub")
@@ -59,6 +67,8 @@ async def refresh_token(refresh_token: str):
     user_doc = users_collection.find_one({"_id": user_id})
     if not user_doc:
         raise HTTPException(status_code=401, detail="User not found")
+    if not user_doc.get("is_active", True):
+        raise HTTPException(status_code=403, detail="User is deactivated")
 
     token_data = {"sub": str(user_doc["_id"]), "role": user_doc["role"]}
     return TokenResponse(
@@ -212,3 +222,64 @@ async def delete_user(
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="User not found")
     return {"detail": "User deleted"}
+
+
+# ── Robot API key management (admin-only) ──
+
+
+@router.post("/robot-keys", response_model=RobotKeyCreatedResponse, status_code=201)
+async def create_robot_key(
+    data: RobotKeyCreate,
+    _admin: UserResponse = Depends(require_role(UserRole.admin)),
+):
+    raw_key = f"rk_{secrets.token_urlsafe(32)}"
+    key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
+    key_id = str(uuid.uuid4())
+    now = datetime.now(timezone.utc).isoformat()
+
+    doc = {
+        "_id": key_id,
+        "name": data.name,
+        "robot_id": data.robot_id,
+        "api_key_hash": key_hash,
+        "key_prefix": raw_key[:10] + "...",
+        "created_at": now,
+    }
+    robot_api_keys_collection.insert_one(doc)
+
+    return RobotKeyCreatedResponse(
+        id=key_id,
+        name=data.name,
+        robot_id=data.robot_id,
+        key_prefix=doc["key_prefix"],
+        created_at=now,
+        api_key=raw_key,
+    )
+
+
+@router.get("/robot-keys", response_model=List[RobotKeyResponse])
+async def list_robot_keys(
+    _admin: UserResponse = Depends(require_role(UserRole.admin)),
+):
+    docs = robot_api_keys_collection.find()
+    return [
+        RobotKeyResponse(
+            id=str(d["_id"]),
+            name=d["name"],
+            robot_id=d["robot_id"],
+            key_prefix=d.get("key_prefix", ""),
+            created_at=d["created_at"],
+        )
+        for d in docs
+    ]
+
+
+@router.delete("/robot-keys/{key_id}")
+async def delete_robot_key(
+    key_id: str,
+    _admin: UserResponse = Depends(require_role(UserRole.admin)),
+):
+    result = robot_api_keys_collection.delete_one({"_id": key_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Robot key not found")
+    return {"detail": "Robot key deleted"}

@@ -10,6 +10,7 @@ import os
 
 from app.auth.dependencies import get_current_user, get_robot_or_user, require_role
 from app.auth.models import UserResponse, UserRole
+from app.validators import validate_map_id
 from .models import ZoneCreate, ZoneUpdate, ZoneResponse
 
 logger = logging.getLogger(__name__)
@@ -99,6 +100,7 @@ async def _clear_other_defaults(map_id: str, exclude_zone_id: str):
 
 @router.get("", response_model=List[ZoneResponse])
 async def list_zones(map_id: str, _user: UserResponse = Depends(get_robot_or_user)):
+    validate_map_id(map_id)
     params = {"type": "Zone", "q": "mapId=={}".format(map_id), "limit": "1000"}
     headers = {"Accept": "application/json", **{k: v for k, v in HEADERS.items() if k != "Content-Type"}}
     try:
@@ -121,6 +123,7 @@ async def create_zone(
     data: ZoneCreate,
     user: UserResponse = Depends(require_role(UserRole.admin, UserRole.operator)),
 ):
+    validate_map_id(map_id)
     if len(data.polygon) < 3:
         raise HTTPException(status_code=400, detail="Polygon must have at least 3 vertices")
     if data.zoneType not in ("parking", "speed_limit"):
@@ -177,6 +180,7 @@ async def update_zone(
     data: ZoneUpdate,
     _user: UserResponse = Depends(require_role(UserRole.admin, UserRole.operator)),
 ):
+    validate_map_id(map_id)
     entity_id = "urn:ngsi-ld:Zone:{}".format(zone_id)
     attrs: dict = {}
     if data.name is not None:
@@ -223,6 +227,7 @@ async def delete_zone(
     zone_id: str,
     _user: UserResponse = Depends(require_role(UserRole.admin, UserRole.operator)),
 ):
+    validate_map_id(map_id)
     entity_id = "urn:ngsi-ld:Zone:{}".format(zone_id)
     url = "{}/{}".format(FIWARE_ORION_URL, entity_id)
     headers = {k: v for k, v in HEADERS.items() if k != "Content-Type"}

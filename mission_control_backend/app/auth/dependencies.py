@@ -1,14 +1,12 @@
-import os
+import hashlib
 from fastapi import Depends, HTTPException, status, Header
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import JWTError
 from .jwt_handler import decode_token
-from .database import users_collection
+from .database import users_collection, robot_api_keys_collection
 from .models import UserResponse, UserRole
 
 security = HTTPBearer(auto_error=False)
-
-ROBOT_API_KEY = os.getenv("ROBOT_API_KEY", "")
 
 
 async def get_current_user(
@@ -62,16 +60,19 @@ async def get_robot_or_user(
     x_robot_api_key: str = Header(None),
 ) -> UserResponse:
     """Accept either a Robot API Key or a JWT token."""
-    # Check robot API key first
-    if x_robot_api_key and ROBOT_API_KEY and x_robot_api_key == ROBOT_API_KEY:
-        return UserResponse(
-            id="robot-service",
-            email="robot@internal",
-            username="robot",
-            role=UserRole.admin,
-            created_at="",
-            last_login=None,
-            is_active=True,
-        )
+    if x_robot_api_key:
+        key_hash = hashlib.sha256(x_robot_api_key.encode()).hexdigest()
+        key_doc = robot_api_keys_collection.find_one({"api_key_hash": key_hash})
+        if key_doc:
+            return UserResponse(
+                id=f"robot-{key_doc['robot_id']}",
+                email="robot@internal",
+                username=key_doc.get("name", "robot"),
+                role=UserRole.robot,
+                created_at=key_doc.get("created_at", ""),
+                last_login=None,
+                is_active=True,
+            )
+        raise HTTPException(status_code=401, detail="Invalid robot API key")
     # Fall back to JWT
     return await get_current_user(credentials)

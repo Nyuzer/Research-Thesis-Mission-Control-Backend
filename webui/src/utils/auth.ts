@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { reconnectWS } from "./ws";
 
 export type UserRole = "admin" | "operator" | "viewer";
 
@@ -68,12 +69,15 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     const rt = get().refreshToken;
     if (!rt) return false;
     try {
-      const res = await fetch(`/api/auth/refresh?refresh_token=${encodeURIComponent(rt)}`, {
+      const res = await fetch("/api/auth/refresh", {
         method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ refresh_token: rt }),
       });
       if (!res.ok) return false;
       const data = await res.json();
       get().setAuth(data.access_token, data.refresh_token, data.user);
+      reconnectWS();
       return true;
     } catch {
       return false;

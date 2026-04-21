@@ -1,10 +1,14 @@
 import ReconnectingWebSocket from "reconnecting-websocket";
 import { useSelectionStore } from "./state";
+import { useAuthStore } from "./auth";
 
 let rws: ReconnectingWebSocket | null = null;
 
 export function startWS() {
   if (rws) return;
+  const token = useAuthStore.getState().token;
+  if (!token) return;
+
   const proto = location.protocol === "https:" ? "wss" : "ws";
   const envUrl = (import.meta as any).env?.VITE_WS_URL as string | undefined;
   let url = envUrl;
@@ -17,6 +21,7 @@ export function startWS() {
       url = `${proto}://${location.host}/ws`;
     }
   }
+  url += `${url.includes("?") ? "&" : "?"}token=${encodeURIComponent(token)}`;
   rws = new ReconnectingWebSocket(url);
 
   rws.addEventListener("open", () => {
@@ -47,4 +52,10 @@ export function stopWS() {
     rws.close();
     rws = null;
   }
+}
+
+/** Reconnect WebSocket with a fresh token (call after token refresh). */
+export function reconnectWS() {
+  stopWS();
+  startWS();
 }

@@ -271,3 +271,34 @@ export async function deleteUser(userId: string) {
     method: "DELETE",
   });
 }
+
+// Robot API keys (admin only)
+export interface RobotKey {
+  id: string;
+  name: string;
+  robot_id: string;
+  key_prefix: string;
+  created_at: string;
+}
+
+export interface RobotKeyCreated extends RobotKey {
+  api_key: string;
+}
+
+export async function fetchRobotKeys() {
+  return fetchJSON<RobotKey[]>(`/api/auth/robot-keys`);
+}
+
+export async function createRobotKey(data: { name: string; robot_id: string }) {
+  return fetchJSON<RobotKeyCreated>(`/api/auth/robot-keys`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteRobotKey(keyId: string) {
+  return fetchJSON(`/api/auth/robot-keys/${encodeURIComponent(keyId)}`, {
+    method: "DELETE",
+  });
+}

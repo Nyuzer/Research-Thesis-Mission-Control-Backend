@@ -12,7 +12,27 @@ import urllib.request
 import shutil
 from datetime import datetime
 from enum import Enum
+from pathlib import Path
 import pyproj
+
+# Load .env from project root
+_dir = Path(__file__).resolve().parent
+while _dir != _dir.parent:
+    _env = _dir / ".env"
+    if _env.exists():
+        try:
+            from dotenv import load_dotenv
+            load_dotenv(_env, override=True)
+        except ImportError:
+            # Fallback: parse .env manually if python-dotenv not installed
+            with open(_env) as _f:
+                for _line in _f:
+                    _line = _line.strip()
+                    if _line and not _line.startswith('#') and '=' in _line:
+                        _k, _, _v = _line.partition('=')
+                        os.environ[_k.strip()] = _v.strip()
+        break
+    _dir = _dir.parent
 
 import paho.mqtt.client as mqtt
 from std_msgs.msg import String, Float32
@@ -74,7 +94,11 @@ class FiwareMqttBridge:
 
         # Robot API Key for backend authentication (from environment variable)
         self.robot_api_key = os.environ.get('ROBOT_API_KEY', '')
-        
+        if self.robot_api_key:
+            rospy.loginfo(f"Robot API key loaded: {self.robot_api_key[:10]}...")
+        else:
+            rospy.logwarn("ROBOT_API_KEY not set — backend requests will be unauthenticated")
+
         # Ensure local maps directory exists
         os.makedirs(self.local_maps_path, exist_ok=True)
         
@@ -560,7 +584,11 @@ class FiwareMqttBridge:
             headers = {}
             if self.robot_api_key:
                 headers['X-Robot-API-Key'] = self.robot_api_key
+                rospy.loginfo(f"Sending X-Robot-API-Key: {self.robot_api_key[:10]}...")
+            else:
+                rospy.logwarn("No robot API key set for this request!")
             response = requests.get(files_url, headers=headers, timeout=10)
+            rospy.loginfo(f"Response status: {response.status_code}")
             response.raise_for_status()
             
             map_info = response.json()
